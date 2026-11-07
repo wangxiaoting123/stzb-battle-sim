@@ -2334,6 +2334,20 @@ export function triggerPassiveSkills(
     const skill = resolveSkill(ctx, id);
     if (skill?.type !== 'passive' || skill.timing !== timing) continue;
     if (!passesCasterPosition(skill, unit)) continue; // 站位条件（同战法口径）
+    // roundStartStack：准备阶段预挂初始层（每回合开始的叠层在 tickRoundStartStatuses）
+    if (skill.roundStartStack) {
+      const layers = skill.roundStartStack.initialLayers ?? 1;
+      for (let i = 0; i < layers; i += 1) {
+        inflictStatus(ctx, unit, skill.roundStartStack.status, skill.type, skill.id, unit.general.id);
+      }
+      ctx.events.push({
+        type: 'skill_cast',
+        unitId: unit.general.id,
+        skillId: skill.id,
+        skillName: skill.name,
+      });
+      continue;
+    }
     // 层数型受伤减免（百战无怯）：战斗开始即满层 + 挂常驻减伤
     // （无 output / 无回合段 / 无受击段时只登记，不空跑 executeSkillWithTargets）
     if (skill.stacksReduceHeal) {
@@ -5770,6 +5784,16 @@ export function tickRoundStartStatuses(ctx: CombatContext): void {
     }
   }
 
+  // roundStartStack：每回合开始（单位行动前）叠 1 层（愈战愈勇 / 深谋远虑 / 步步为营）
+  for (const unit of units) {
+    if (!unit.alive) continue;
+    for (const id of unit.general.passiveSkillIds) {
+      const skill = resolveSkill(ctx, id);
+      if (skill?.type !== 'passive' || !skill.roundStartStack) continue;
+      inflictStatus(ctx, unit, skill.roundStartStack.status, skill.type, skill.id, unit.general.id);
+    }
+  }
+
   runRoundStartRepeats(ctx, false);
 }
 
@@ -6044,7 +6068,8 @@ function heishanFlat(g: { secondaryTroop?: string; attack: number; defense: numb
 }
 
 /** 生效属性：面板基础值 + 部队加成点数 + 战法点数增减（攻击/防御/谋略/速度）+ 百分比增减。
- *  百分比按「当前生效属性（含部队加成与点数增减后）」结算：eff = base + formation + flat，再 + round(eff × Σpercent/100)。
+ *  百分比只按「面板」结算（面板 = 基础 + 成长 + 加点 + 红度 + 陈寿持重；**不含**部队加成 / 兵种特性 /
+ *  二级兵种 / 战法与宝物点数）：final = base + flat + round(|base × Σpercent|/100)，点数不被百分比放大。
  *  正负独立：攻击增益(+)与攻击降低(-)互不抵消，各自相加。
  *  `ignoreExpired`：只给出手顺序/回合重排用——第 2 组状态在行动开始时递减到 0 后，
  *  按包内语义要等到再下一次行动才移除；排序发生在移除之前，不能让 remaining=0 的旧速度继续影响出手。 */
@@ -6073,11 +6098,10 @@ export function effectiveStat(
   const troopPct = (g.secondaryTroop ? SECONDARY_TROOPS[g.secondaryTroop].statPct ?? 0 : 0)
     + (g.secondaryTroop === '白波轻骑' && kind === 'speed' ? g.commandSkillIds.length * 10 : 0);
   const pct = troopPct + buffs.reduce((acc, s) => acc + (('amount' in s && 'percent' in s && s.percent ? s.amount : 0) as number), 0);
-  const eff = base + flat;
-  if (pct === 0) return eff;
-  // 四舍五入按绝对值（-31.5 → -32，与「降低 32 点」直觉一致）
-  const bonus = Math.round(Math.abs((eff * pct) / 100)) * Math.sign(pct);
-  return eff + bonus;
+  if (pct === 0) return base + flat;
+  // 四舍五入按绝对值（-31.5 → -32，与「降低 32 点」直觉一致）；百分比只乘面板 base
+  const bonus = Math.round(Math.abs((base * pct) / 100)) * Math.sign(pct);
+  return base + flat + bonus;
 }
 
 /**

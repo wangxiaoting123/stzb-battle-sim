@@ -66,13 +66,14 @@ describe('指挥/被动管线（T7）', () => {
     expect(fz.length + wj.length).toBe(taishici!.skillCount - 1);
   });
 
-  it('被动战法在武将行动时触发（步步为营×8 + 青囊密要×8）', () => {
+  it('被动战法在武将行动时触发（青囊密要×8；步步为营改为回合开始叠层不在行动阶段）', () => {
     const report = runBattle(T7());
     const passivePhase = eventsOf(report, 'unit_act_start').filter(
       (e) => 'phase' in e && e.phase === 'passive_skill' && e.unitId === 'sunquan'
     );
-    // 被动已改为武将行动阶段触发（不在准备阶段）：8 回合 × 2 个被动
-    expect(passivePhase.length).toBe(16); // 8 回合 × 2 个被动
+    // 步步为营已改为 roundStartStack（准备阶段 1 层 + 每回合开始前叠层），不再在行动阶段触发
+    // unit_act_start；只有青囊密要（round_start）仍在行动阶段触发：8 回合 × 1 个被动
+    expect(passivePhase.length).toBe(8);
   });
 
   it('青囊密要在受伤后能恢复兵力', () => {

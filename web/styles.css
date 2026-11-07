@@ -3577,6 +3577,19 @@ main {
 .preset-name-modal .pn-input:focus { outline: none; border-color: var(--gold); }
 .preset-name-modal .pn-error { min-height: 18px; margin-top: 6px; font-size: 11.5px; color: #d88b7e; }
 
+/* 预设分享 / 导入弹窗（导出展示 JSON、导入粘贴 JSON） */
+.share-modal, .import-modal { width: min(520px, 92vw); }
+.share-modal .share-hint, .import-modal .share-hint { font-size: 12px; color: var(--text-dim); line-height: 1.7; margin-bottom: 10px; }
+.share-modal .share-text, .import-modal .share-text {
+  width: 100%; min-height: 160px; box-sizing: border-box;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: 3px;
+  padding: 8px 10px; font-size: 12px; font-family: ui-monospace, Consolas, monospace;
+  resize: vertical;
+}
+.share-modal .share-text:focus, .import-modal .share-text:focus { outline: none; border-color: var(--gold); }
+.share-modal .share-msg, .import-modal .share-msg { min-height: 18px; margin-top: 6px; font-size: 11.5px; color: var(--text-weak); }
+
 @media (max-width: 720px) {
   .preset-body { grid-template-columns: 1fr; min-height: auto; }
   .preset-list { max-height: 42dvh; }

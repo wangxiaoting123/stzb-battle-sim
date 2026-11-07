@@ -73,15 +73,15 @@ describe('百分比属性增减（percent）', () => {
     expect(effectiveStat(u, 'attack')).toBe(170); // 200 × 15% = 30
   });
 
-  it('百分比与点数增减叠加：先算点数（210）再按百分比降（-32 点）', () => {
+  it('百分比只乘面板，点数直接加（面板 200：-15%→-30，+10 点不被放大）', () => {
     const ctx = makeCtx();
     const u = makeUnit('a');
     // 点数 +10（如友军攻击增益）
     inflictStatus(ctx, u, { type: 'attack_buff', amount: 10, duration: 3 }, 'command', 'some_buff');
     // 魏武之世 -15%（percent）
     inflictStatus(ctx, u, debuff15, 'command', 'weiwu_zhishi');
-    // 生效 = 200+10=210；210×15% = 31.5 → 32 点降低 → 178
-    expect(effectiveStat(u, 'attack')).toBe(178);
+    // 生效 = 面板 200×15% = 30 点降低；+10 点不被百分比放大 → 200 - 30 + 10 = 180
+    expect(effectiveStat(u, 'attack')).toBe(180);
   });
 
   it('百分比 buff 事件带 % 标识', () => {
@@ -106,8 +106,8 @@ describe('属性类正负分桶（一减一增互不冲突）', () => {
     expect(speedStatuses.length).toBe(2);
     const conflicts = ctx.events.filter((e) => e.type === 'status_conflict' && 'statusType' in e && e.statusType === 'speed_buff');
     expect(conflicts.length).toBe(0);
-    // 生效速度 = (100+41) × (1-0.15) = 141 × 0.85 = 119.85 → 120（round 绝对值）
-    expect(effectiveStat(u, 'speed')).toBe(120);
+    // 生效速度 = 面板 100×(1-0.15) + 41 = 85 + 41 = 126（百分比只乘面板）
+    expect(effectiveStat(u, 'speed')).toBe(126);
   });
 
   it('同号属性类冲突：数值取较高（+41 vs +30 → 41）', () => {

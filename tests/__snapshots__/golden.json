@@ -12530,7 +12530,7 @@
         2583,
         6057
       ],
-      "eventCount": 412,
+      "eventCount": 389,
       "events": [
         {
           "type": "battle_start",
@@ -12699,6 +12699,18 @@
         {
           "type": "prep_phase",
           "phase": "skill"
+        },
+        {
+          "type": "status_inflicted",
+          "unitId": "sunquan",
+          "statusType": "damage_reduce",
+          "detail": "减伤 0.11 持续至战斗结束"
+        },
+        {
+          "type": "skill_cast",
+          "unitId": "sunquan",
+          "skillId": "bubu_weiyin",
+          "skillName": "步步为营"
         },
         {
           "type": "unit_act_start",
@@ -12997,33 +13009,6 @@
         {
           "type": "unit_act_end",
           "unitId": "taishici"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
-        },
-        {
-          "type": "status_inflicted",
-          "unitId": "sunquan",
-          "statusType": "damage_reduce",
-          "detail": "减伤 0.11 持续至战斗结束"
         },
         {
           "type": "unit_act_start",
@@ -13506,27 +13491,6 @@
         {
           "type": "unit_act_end",
           "unitId": "taishici"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
         },
         {
           "type": "unit_act_start",
@@ -14123,27 +14087,6 @@
         {
           "type": "skill_target",
           "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
           "skillId": "qingnang_miyao",
           "targetIds": [
             "sunquan"
@@ -14593,27 +14536,6 @@
         {
           "type": "unit_act_end",
           "unitId": "taishici"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
         },
         {
           "type": "unit_act_start",
@@ -15076,27 +14998,6 @@
         {
           "type": "skill_target",
           "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
           "skillId": "qingnang_miyao",
           "targetIds": [
             "sunquan"
@@ -15458,27 +15359,6 @@
         {
           "type": "skill_target",
           "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
           "skillId": "qingnang_miyao",
           "targetIds": [
             "sunquan"
@@ -15816,27 +15696,6 @@
         {
           "type": "unit_act_end",
           "unitId": "taishici"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
         },
         {
           "type": "unit_act_start",
@@ -16193,27 +16052,6 @@
         {
           "type": "unit_act_end",
           "unitId": "taishici"
-        },
-        {
-          "type": "unit_act_start",
-          "unitId": "sunquan",
-          "name": "孙权",
-          "position": "前锋",
-          "phase": "passive_skill"
-        },
-        {
-          "type": "skill_target",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "targetIds": [
-            "sunquan"
-          ]
-        },
-        {
-          "type": "skill_cast",
-          "unitId": "sunquan",
-          "skillId": "bubu_weiyin",
-          "skillName": "步步为营"
         },
         {
           "type": "unit_act_start",

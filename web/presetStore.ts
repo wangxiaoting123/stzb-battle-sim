@@ -38,6 +38,13 @@ export interface PresetFile {
   list: TeamPreset[];
 }
 
+/** 导入条目：分享/迁移里的一条队伍（只含 name / side / slots，无本地字段） */
+export interface ImportEntry {
+  name: string;
+  side: TeamSide;
+  slots: SlotState[];
+}
+
 /** 只用 getItem/setItem，避免依赖完整 Storage（单测注入内存实现） */
 export interface PresetStorage {
   getItem(key: string): string | null;
@@ -307,6 +314,49 @@ export function addPreset(
     updatedAt: now,
   };
   return { file: { maxNo: preset.no, list: [...file.list, preset] }, preset, replaced: false };
+}
+
+/** 同边同名自动追加序号避让（「双减魏智」→「双减魏智 (2)」→「双减魏智 (3)」…） */
+function uniqueName(file: PresetFile, name: string, side: TeamSide): string {
+  let candidate = name;
+  let n = 2;
+  while (findSameName(file, candidate, side)) {
+    candidate = `${name} (${n})`;
+    n += 1;
+  }
+  return candidate;
+}
+
+/**
+ * 导入一批队伍（分享 / 备份迁移）：逐条分配**新 id 与编号**，同边同名自动加序号避让，
+ * 绝不覆盖对方既有预设；超 `PRESET_MAX` 时截断（不再导入后续条目）。
+ * 返回新文件与成功导入的条目（供调用方提示「导入了 N 条」）。
+ */
+export function importPresets(
+  file: PresetFile,
+  entries: ImportEntry[],
+  now = Date.now()
+): { file: PresetFile; imported: TeamPreset[] } {
+  let next = { ...file };
+  const imported: TeamPreset[] = [];
+  for (const e of entries) {
+    if (next.list.length >= PRESET_MAX) break;
+    const name = uniqueName(next, normalizeName(e.name), e.side);
+    if (!name) continue;
+    const no = next.maxNo + 1;
+    const preset: TeamPreset = {
+      id: newId(now),
+      no,
+      name,
+      side: e.side,
+      slots: cloneSlots(e.slots).slice(0, 3),
+      createdAt: now,
+      updatedAt: now,
+    };
+    next = { maxNo: no, list: [...next.list, preset] };
+    imported.push(preset);
+  }
+  return { file: next, imported };
 }
 
 /** 删除预设（编号水位保留 → 后续新增不重号） */

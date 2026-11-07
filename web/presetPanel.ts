@@ -11,13 +11,14 @@
  * 按钮一律走项目按键标准 `class="btn beige"`（见 styles.css「项目按键标准」），不用裸文字 .btn.ghost
  * —— 用户 2026-09-22：「所有的按键都为按钮，用按钮的统一 UI 设计」。
  */
-import { PRESET_MAX, SIDE_LABEL, searchPresets, type TeamPreset, type TeamSide } from './presetStore';
+import { PRESET_MAX, SIDE_LABEL, searchPresets, type ImportEntry, type TeamPreset, type TeamSide } from './presetStore';
 import { hotVersion, isHotId } from './hotPresets';
 import { getHeroById, avatarSrc, rednessStars, skillGrade } from './heroes';
 import { SKILL_REGISTRY } from '../src/data/skills';
 import { TREASURES_BY_ID, AFFIXES } from '../src/data/treasures';
 import { SECONDARY_TROOPS } from '../src/engine/secondaryTroop';
 import { openPresetUploadDialog, type PresetScanSaveInput } from './presetUpload';
+import { encodeShare, decodeShare } from './presetShare';
 import type { SlotState } from './teamEditor';
 
 /** 面板动作结果：`error` 有值 = 失败（面板内提示），`presetId` = 新建/覆盖后的预设（自动选中） */
@@ -47,6 +48,12 @@ export interface PresetPanelDeps {
   useAsDummy?: (preset: TeamPreset) => void;
   rename: (id: string, name: string) => PresetActionResult;
   remove: (id: string) => void;
+  /**
+   * 导入分享/备份的队伍（把 `ImportEntry[]` 落进「我的预设」并持久化）。
+   * 返回 `error` = 失败（面板内提示）；`presetId` = 首条导入项（面板切到「我的预设」并选中）。
+   * 不提供 = 不显示「导入」入口（老调用方 / 单测向后兼容）。
+   */
+  importPresets?: (entries: ImportEntry[]) => PresetActionResult;
   /**
    * 「上传图片」识图建预设（用户 2026-10-21）：把截图识别出的三槽直接写进「我的预设」。
    * 不提供 = 不显示该入口（老调用方 / 单测向后兼容）。
@@ -220,6 +227,158 @@ export function openPresetNameDialog(opts: {
   input.focus();
 }
 
+/** 下载一段文本为 .json 文件 */
+function downloadText(filename: string, text: string): void {
+  // 安卓原生壳：走 JS 桥写进下载目录（WebView 的 <a download> 没有 DownloadListener 不会触发下载）
+  const bridge = (globalThis as { StzbNative?: { saveTextFile?: (f: string, c: string) => void } }).StzbNative;
+  if (bridge?.saveTextFile) {
+    bridge.saveTextFile(filename, text);
+    return;
+  }
+  // 网页版：浏览器原生下载
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** 复制文本：优先 clipboard API，失败回退「选中 + execCommand」 */
+async function copyText(text: string, ta: HTMLTextAreaElement): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    ta.focus();
+    ta.select();
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  }
+}
+
+/** 导出弹窗：展示分享 JSON，可复制 / 下载 .json */
+function openShareDialog(opts: { title: string; json: string; filename: string; hint?: string }): void {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  const modal = document.createElement('div');
+  modal.className = 'modal share-modal';
+  modal.innerHTML = `
+    <div class="m-head"><h3>${opts.title}</h3><span class="m-close">×</span></div>
+    <div class="m-body">
+      <div class="share-hint">${opts.hint ?? '把下面这段 JSON 发给好友，好友在「预设」面板点「导入」粘贴即可'}</div>
+      <textarea class="share-text" readonly spellcheck="false"></textarea>
+      <div class="share-msg"></div>
+    </div>
+    <div class="m-foot">
+      <button class="btn beige share-copy" type="button">复制</button>
+      <button class="btn beige share-download" type="button">下载 .json</button>
+      <button class="btn share-done" type="button">完成</button>
+    </div>
+  `;
+  const ta = modal.querySelector('.share-text') as HTMLTextAreaElement;
+  const msg = modal.querySelector('.share-msg') as HTMLElement;
+  ta.value = opts.json;
+  const close = (): void => mask.remove();
+  modal.querySelector('.share-copy')!.addEventListener('click', () => {
+    void copyText(opts.json, ta).then((ok) => {
+      msg.textContent = ok ? '已复制到剪贴板' : '复制失败，请手动全选复制';
+    });
+  });
+  modal.querySelector('.share-download')!.addEventListener('click', () => downloadText(opts.filename, opts.json));
+  modal.querySelector('.share-done')!.addEventListener('click', close);
+  modal.querySelector('.m-close')!.addEventListener('click', close);
+  mask.addEventListener('click', (e) => {
+    if (e.target === mask) close();
+  });
+  mask.appendChild(modal);
+  document.body.appendChild(mask);
+}
+
+/** 导入弹窗：粘贴 JSON 或选 .json 文件 → 解析校验 → 落库 */
+function openImportDialog(opts: {
+  importPresets: (entries: ImportEntry[]) => PresetActionResult;
+  onImported: (presetId?: string) => void;
+}): void {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  const modal = document.createElement('div');
+  modal.className = 'modal import-modal';
+  modal.innerHTML = `
+    <div class="m-head"><h3>导入预设</h3><span class="m-close">×</span></div>
+    <div class="m-body">
+      <div class="share-hint">粘贴好友发来的预设 JSON，或选择 .json 文件</div>
+      <textarea class="share-text import-text" placeholder="粘贴 JSON 文本…" spellcheck="false"></textarea>
+      <input type="file" class="import-file" accept=".json,application/json" hidden />
+      <div class="share-msg"></div>
+    </div>
+    <div class="m-foot">
+      <button class="btn beige import-choose" type="button">选择文件</button>
+      <span class="spacer"></span>
+      <button class="btn beige import-cancel" type="button">取消</button>
+      <button class="btn import-ok" type="button">导入</button>
+    </div>
+  `;
+  const ta = modal.querySelector('.import-text') as HTMLTextAreaElement;
+  const fileInput = modal.querySelector('.import-file') as HTMLInputElement;
+  const msg = modal.querySelector('.share-msg') as HTMLElement;
+  const close = (): void => mask.remove();
+
+  const doImport = (): void => {
+    const text = ta.value.trim();
+    if (!text) {
+      msg.textContent = '先粘贴 JSON 或选择文件';
+      return;
+    }
+    let entries: ImportEntry[];
+    try {
+      entries = decodeShare(text);
+    } catch (e) {
+      msg.textContent = (e as Error).message;
+      return;
+    }
+    const r = opts.importPresets(entries);
+    if (r.error) {
+      msg.textContent = r.error;
+      return;
+    }
+    close();
+    opts.onImported(r.presetId);
+  };
+
+  modal.querySelector('.import-choose')!.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files?.[0];
+    if (!f) return;
+    f.text()
+      .then((t) => {
+        ta.value = t;
+        msg.textContent = '';
+      })
+      .catch(() => {
+        msg.textContent = '读文件失败';
+      });
+  });
+  modal.querySelector('.import-ok')!.addEventListener('click', doImport);
+  modal.querySelector('.import-cancel')!.addEventListener('click', close);
+  modal.querySelector('.m-close')!.addEventListener('click', close);
+  mask.addEventListener('click', (e) => {
+    if (e.target === mask) close();
+  });
+  mask.appendChild(modal);
+  document.body.appendChild(mask);
+  ta.focus();
+}
+
 /**
  * 打开阵容预设面板。列表与详情都从 `deps.getPresets()` 现取现渲染——
  * 存档变更后不必重建面板，重新渲染即可。
@@ -239,6 +398,10 @@ export function openPresetPanel(deps: PresetPanelDeps): PresetPanelHandle {
   const uploadBtn = deps.saveScanned
     ? '<button class="btn beige preset-upload" type="button" title="上传游戏「阵容详情」截图，自动识别三将 / 红度 / 战法，确认后存进「我的预设」">上传图片</button>'
     : '';
+  // 导入（粘贴/选择分享 JSON）；不注入 importPresets 的老调用方不显示该入口
+  const importBtn = deps.importPresets
+    ? '<button class="btn beige preset-import" type="button" title="粘贴好友分享的预设 JSON，导入成自己的预设">导入</button>'
+    : '';
   modal.innerHTML = `
     <div class="m-head">
       <h3>预设</h3>
@@ -255,6 +418,8 @@ export function openPresetPanel(deps: PresetPanelDeps): PresetPanelHandle {
     </div>
     <div class="m-foot preset-foot">
       <span class="preset-count"></span>
+      <button class="btn beige preset-export-all" type="button" title="把「我的预设」全部导出成一份 JSON（备份 / 换设备迁移）">导出全部</button>
+      ${importBtn}
       <span class="spacer"></span>
       <button class="btn beige preset-save" data-side="red" type="button">保存红队</button>
       <button class="btn beige preset-save" data-side="blue" type="button">保存蓝队</button>
@@ -413,11 +578,13 @@ export function openPresetPanel(deps: PresetPanelDeps): PresetPanelHandle {
       <button class="btn beige" data-act="rename" type="button">重命名</button>
       <button class="btn beige danger" data-act="remove" type="button">${armedDelete ? '再点一次确认删除' : '删除'}</button>
     `;
+    const exportBtn = `<button class="btn beige" data-act="export" type="button" title="把这支队伍导出成 JSON 分享给好友">导出</button>`;
     actions.innerHTML = `
       <button class="btn${primaryApply('red')}" data-act="apply-red" type="button">上场到红队</button>
       <button class="btn${primaryApply('blue')}" data-act="apply-blue" type="button">上场到蓝队</button>
       ${dummyBtn}
       ${copyBtn}
+      ${exportBtn}
       ${editBtns}
     `;
     // 上场 = 整边替换 + 关面板（「快速上场」的主路径）
@@ -433,6 +600,14 @@ export function openPresetPanel(deps: PresetPanelDeps): PresetPanelHandle {
     actions.querySelector('[data-act="dummy"]')?.addEventListener('click', () => {
       deps.useAsDummy!(preset);
       close();
+    });
+    // 导出：把当前选中预设（热门或我的）编码成分享 JSON，弹窗里复制 / 下载
+    actions.querySelector('[data-act="export"]')?.addEventListener('click', () => {
+      openShareDialog({
+        title: `导出预设 · ${preset.name}`,
+        json: encodeShare([preset]),
+        filename: `stzb-preset-${preset.name}.json`,
+      });
     });
     // 另存为我的预设：内置条目 → 用户存档（同边同名 = 覆盖；落存档后就是可编辑的自己的预设）
     actions.querySelector('[data-act="copy"]')?.addEventListener('click', () => {
@@ -527,6 +702,33 @@ export function openPresetPanel(deps: PresetPanelDeps): PresetPanelHandle {
           return null;
         },
       });
+    });
+  });
+
+  // 导入：粘贴 / 选择文件 → 解析校验 → 落库 → 切到「我的预设」并选中首条
+  modal.querySelector('.preset-import')?.addEventListener('click', () => {
+    if (!deps.importPresets) return;
+    openImportDialog({
+      importPresets: deps.importPresets,
+      onImported: (presetId) => {
+        armedDelete = false;
+        if (presetId) {
+          selectedId = presetId;
+          tab = 'mine'; // 导入的条目一定在「我的预设」
+        }
+        renderList();
+        renderDetail();
+      },
+    });
+  });
+  // 导出全部：把「我的预设」整体编码成一份 JSON 备份
+  modal.querySelector('.preset-export-all')?.addEventListener('click', () => {
+    const all = deps.getPresets();
+    openShareDialog({
+      title: '导出全部预设',
+      json: encodeShare(all),
+      filename: `stzb-presets-${new Date().toISOString().slice(0, 10)}.json`,
+      hint: all.length ? `共 ${all.length} 条，可复制发给好友或下载备份` : '还没有自己的预设，先保存几条再导出',
     });
   });
 

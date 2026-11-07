@@ -1,12 +1,18 @@
 package io.github.ybytlai78dev.stzb;
 
+import android.content.ContentValues;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+import android.widget.Toast;
 
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -17,6 +23,10 @@ import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.WebViewListener;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
@@ -44,6 +54,7 @@ public class MainActivity extends BridgeActivity {
         applyEdgeToEdge();
         applyCanvasColor(CANVAS_COLOR);
         installSafeAreaBridge();
+        installDownloadBridge();
         hideSystemBars();
     }
 
@@ -207,5 +218,77 @@ public class MainActivity extends BridgeActivity {
                 left
         );
         webView.evaluateJavascript(script, null);
+    }
+
+    /**
+     * 给网页挂一个原生下载桥 {@code window.StzbNative.saveTextFile(filename, content)}。
+     *
+     * <p>为什么不用 {@code DownloadListener} + {@code DownloadManager}（最初方案一）：
+     * 预设导出的 JSON 是网页内存里的字符串（blob / data 内容），不是 http(s) 真实 URL，
+     * {@code DownloadManager} 只能抓真实 URL，抓不到 WebView 内存里的内容——点下载会静默无反应。
+     * 所以改成 JS 桥：网页把「文件名 + 内容」直接交给原生，原生写入下载目录。</p>
+     *
+     * <p>安全性：本 App 只加载打包进来的 {@code https://localhost} 页面，不加载任意远程内容，
+     * 暴露这个接口不构成注入风险（与 Capacitor 插件同口径）。</p>
+     */
+    private void installDownloadBridge() {
+        WebView webView = getBridge() == null ? null : getBridge().getWebView();
+        if (webView != null) {
+            webView.addJavascriptInterface(new NativeBridge(), "StzbNative");
+        }
+    }
+
+    /** 网页调用的原生桥：把文本写进下载目录（JSON 分享 / 备份用）。 */
+    private class NativeBridge {
+        @JavascriptInterface
+        public void saveTextFile(String filename, String content) {
+            boolean ok = writeToDownloads(filename, content);
+            String name = safeFilename(filename);
+            // Android 10+ 进公共下载目录，Android 7–9 退到应用私有外部目录（免运行时权限）
+            String location = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? "下载目录" : "应用私有目录";
+            runOnUiThread(() -> Toast.makeText(
+                    MainActivity.this,
+                    ok ? "已保存到" + location + "：" + name : "保存失败",
+                    Toast.LENGTH_LONG).show());
+        }
+    }
+
+    /** 把文本写成文件：Android 10+ 走 MediaStore 公共下载目录，Android 7–9 写应用私有外部目录。 */
+    private boolean writeToDownloads(String filename, String content) {
+        String name = safeFilename(filename);
+        byte[] data = content.getBytes(StandardCharsets.UTF_8);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                values.put(MediaStore.Downloads.MIME_TYPE, "application/json");
+                values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                if (uri == null) return false;
+                try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                    if (os == null) return false;
+                    os.write(data);
+                }
+                return true;
+            }
+            File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (dir == null) return false;
+            if (!dir.exists() && !dir.mkdirs()) return false;
+            try (FileOutputStream fos = new FileOutputStream(new File(dir, name))) {
+                fos.write(data);
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 去掉路径分隔符与 Android/Windows 不允许的文件名字符，兜底一个默认名。 */
+    private static String safeFilename(String name) {
+        String cleaned = (name == null ? "" : name).replaceAll("[\\\\/:*?\"<>|\\r\\n]", "_").trim();
+        if (cleaned.isEmpty() || ".".equals(cleaned) || "..".equals(cleaned)) {
+            cleaned = "presets.json";
+        }
+        return cleaned;
     }
 }

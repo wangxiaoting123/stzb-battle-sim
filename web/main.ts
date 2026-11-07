@@ -48,6 +48,7 @@ import {
   addPreset,
   cloneSlots,
   heroCount,
+  importPresets as mergeImportedPresets,
   nameError,
   readPresetFile,
   removePreset,
@@ -282,6 +283,16 @@ function presetPanelDeps(opts: { dummyMode?: boolean } = {}): PresetPanelDeps {
     rename: renamePresetById,
     remove: removePresetById,
     useAsDummy: usePresetAsDummy,
+    importPresets: (entries) => {
+      const result = mergeImportedPresets(presetFile, entries);
+      presetFile = result.file;
+      persistPresets();
+      if (result.imported.length === 0) {
+        return { error: `预设已满（上限 ${PRESET_MAX} 条），先删掉不用的再导入` };
+      }
+      showNotice(`已导入 ${result.imported.length} 条预设`);
+      return { presetId: result.imported[0]?.id };
+    },
     dummyMode: opts.dummyMode,
   };
 }

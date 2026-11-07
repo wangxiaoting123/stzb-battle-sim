@@ -465,17 +465,21 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
       ],
     },
   },
-  /** 步步为营（A 被动）：使自身受到的所有伤害降低 11%，每回合开始额外叠加一次，持续直到战斗结束 */
+  /** 步步为营（A 被动）：使自身受到的所有伤害降低 11%，准备阶段 1 层、每回合开始前额外叠加一次，持续直到战斗结束 */
   bubu_weiyin: {
     id: 'bubu_weiyin',
     name: '步步为营',
     type: 'passive',
     range: 1,
     triggerRate: 1,
-    timing: 'round_start',
+    timing: 'battle_start',
     targetMode: 'self',
     tags: ['damage_reduce'],
-    output: [{ kind: 'inflict_status', status: { type: 'damage_reduce', rate: 0.11, duration: 999, stack: true } }],
+    output: [],
+    roundStartStack: {
+      initialLayers: 1,
+      status: { type: 'damage_reduce', rate: 0.11, duration: 999, stack: true },
+    },
   },
   /** 青囊秘要（B 被动）：战斗中每回合都会恢复一定兵力（恢复率 150%，固定倍率，不受谋略） */
   qingnang_miyao: {
@@ -2103,17 +2107,21 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
     tags: ['split'],
     output: [{ kind: 'inflict_status', status: { type: 'split', duration: 1, rate: 70 }, target: 'self' }],
   },
-  /** 愈战愈勇（A 被动·round_start）：每回合开始时自身攻击伤害提高 10%，可叠加，持续到战斗结束 */
+  /** 愈战愈勇（A 被动）：使自身进行攻击的伤害提高 10%，准备阶段 1 层、每回合开始前额外叠加一次，持续到战斗结束 */
   yuzhan_yuyong: {
     id: 'yuzhan_yuyong',
     name: '愈战愈勇',
     type: 'passive',
     range: 1,
     triggerRate: 1,
-    timing: 'round_start',
+    timing: 'battle_start',
     targetMode: 'self',
     tags: ['damage_boost'],
-    output: [{ kind: 'inflict_status', status: { type: 'damage_boost', damageType: 'physical', rate: 0.1, duration: 999, direction: 'caused', stack: true }, target: 'self' }],
+    output: [],
+    roundStartStack: {
+      initialLayers: 1,
+      status: { type: 'damage_boost', damageType: 'physical', rate: 0.1, duration: 999, direction: 'caused', stack: true },
+    },
   },
   /** 擅兵不寡（A 被动·round_start）：每回合恢复兵力（180%，30% 额外 300% 近似为必恢复） */
   shanbing_bugua: {
@@ -2127,17 +2135,21 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
     tags: ['heal'],
     output: [{ kind: 'heal', rate: 180, strategyScaled: false, growthRate: 0, target: 'self' }],
   },
-  /** 深谋远虑（A 被动·round_start）：每回合开始时自身策略伤害提高 11%，可叠加，持续到战斗结束 */
+  /** 深谋远虑（A 被动）：使自身进行策略攻击的伤害提高 11%，准备阶段 1 层、每回合开始前额外叠加一次，持续到战斗结束 */
   shenmou_yuanlv: {
     id: 'shenmou_yuanlv',
     name: '深谋远虑',
     type: 'passive',
     range: 1,
     triggerRate: 1,
-    timing: 'round_start',
+    timing: 'battle_start',
     targetMode: 'self',
     tags: ['damage_boost'],
-    output: [{ kind: 'inflict_status', status: { type: 'damage_boost', damageType: 'strategy', rate: 0.11, duration: 999, direction: 'caused', stack: true }, target: 'self' }],
+    output: [],
+    roundStartStack: {
+      initialLayers: 1,
+      status: { type: 'damage_boost', damageType: 'strategy', rate: 0.11, duration: 999, direction: 'caused', stack: true },
+    },
   },
   /** 百战精兵（B 被动·battle_start）：使自身攻击、防御、谋略、速度属性全部提高 32 */
   baizhan_jingbing: {
@@ -6041,8 +6053,9 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
    * 久战熟谋（A 一类指挥·距离 3·友军群体 2 目标）：
    * 使友军群体**每造成一次策略伤害后**，其策略伤害提高 5%（受谋略属性影响），最多叠加 5 次。
    * 官方 id 200959（1 级 2.5%）。
-   * 引擎配套：**新增 `BaseSkill.allyDealStack`** —— 准备阶段把状态挂到锁定友军身上，
-   *   此后该单位每次造成匹配伤害（`damageType:'strategy'`）时同源再施加一次（叠层/上限由 `maxStacks:5` 控制）。
+   * 引擎配套：`BaseSkill.allyDealStack` + `initialLayers: 0` —— 准备阶段**不预挂层数**
+   *   （初始应为 0 层，不白给 +5%），此后该单位每次造成策略伤害（`damageType:'strategy'`）后叠一层，
+   *   首层由锁定目标反查、之后同源再施加（上限 `maxStacks:5`）。
    * 受谋略缩放但成长率未确认 → `growthRate` 留空（基值 5%；初始施加与叠层都按基值，待成长率确认后统一补）。
    */
   jiuzhan_shumou: {
@@ -6059,6 +6072,7 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
     output: [],
     allyDealStack: {
       damageType: 'strategy',
+      initialLayers: 0,
       status: {
         type: 'damage_boost',
         rate: 0.05,
@@ -6238,7 +6252,7 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
    * 引擎配套：① 主动侧复用既有 `roundTrigger:'before_active'`（每次试图发动主动战法前逐段按 `chance`
    *   判定，运筹决胜同链路）；② 追击侧复用 p10 新增的 `BaseSkill.onPursuitAttempt`，段内用
    *   `chance_group{chance:0.4}` 承载「40% 几率」（before_active 走独立链路、不走通用 chance 闸门）。
-   * 受谋略缩放但成长率未确认 → `growthRate` 留空（基值 194%），登记《成长率待补名单》§三。
+   * 受谋略缩放：`growthRate: 1.925`（每 +1 谋略 +1.925%）。
    */
   zhongmou_buxie: {
     id: 'zhongmou_buxie',
@@ -6252,14 +6266,14 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
     targetSide: 'enemy',
     tags: ['damage'],
     output: [
-      { kind: 'strategy_damage', rate: 194, strategyScaled: true, chance: 0.4, targetMode: 'random_single' },
+      { kind: 'strategy_damage', rate: 194, strategyScaled: true, growthRate: 1.925, chance: 0.4, targetMode: 'random_single' },
     ],
     onPursuitAttempt: {
       output: [
         {
           kind: 'chance_group',
           chance: 0.4,
-          outputs: [{ kind: 'strategy_damage', rate: 194, strategyScaled: true, targetMode: 'random_single' }],
+          outputs: [{ kind: 'strategy_damage', rate: 194, strategyScaled: true, growthRate: 1.925, targetMode: 'random_single' }],
         },
       ],
     },

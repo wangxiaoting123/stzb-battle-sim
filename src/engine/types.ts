@@ -2121,6 +2121,17 @@ export interface PassiveSkill extends BaseSkill {
     onDealPhysical?: boolean;
   };
   /**
+   * 自身「每回合开始时叠加」的常驻状态（愈战愈勇 / 深谋远虑 / 步步为营）：
+   * 准备阶段施加 `initialLayers`（缺省 1）层，此后每回合开始（单位行动前）再叠 1 层；
+   * 层数/上限由状态自身 `stack` / `maxStacks` 控制。
+   * 与 `selfPhysBoost` 的区别：这是**通用轨道**（攻击/策略/减伤皆可），且**只在回合开始叠**（不因造成伤害叠）。
+   */
+  roundStartStack?: {
+    status: CreateStatus;
+    /** 准备阶段预挂层数（缺省 1 = 「一开始就有一层」） */
+    initialLayers?: number;
+  };
+  /**
    * 每次成功发动主动战法后触发（九伐中原「自身发动主动战法后…本场战斗共计可发动九次」）。
    * 与二类指挥 `roundTrigger:'after_first_active'` 的区别：后者只在本回合**首次**主动成功后触发，
    * 本钩子**每次**主动战法成功都触发；maxTriggers 为整场战斗的发动次数上限

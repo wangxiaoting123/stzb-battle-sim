@@ -173,15 +173,15 @@ describe('effectiveStat + formationBonus', () => {
     expect(effectiveStat(u, 'attack')).toBe(200);
   });
 
-  it('部队加成先落地，魏武之世 -15% 打在加成后', () => {
+  it('部队加成是点数（不被百分比放大），魏武之世 -15% 只乘面板', () => {
     const ctx = makeCtx();
     const u = makeUnit('a', { attack: 205 });
     u.formationBonus = { attack: 42, defense: 0, strategy: 0, speed: 0 };
     expect(effectiveStat(u, 'attack')).toBe(247);
     const debuff: CreateStatus = { type: 'attack_buff', amount: -15, percent: true, duration: 999 };
     inflictStatus(ctx, u, debuff, 'command', 'weiwu_zhishi');
-    // (205+42)=247；247×15%=37.05 → 37；247-37=210
-    expect(effectiveStat(u, 'attack')).toBe(210);
+    // 面板 205×15% = 30.75 → 31 点降低；+42 部队加成不被放大 → 205 - 31 + 42 = 216
+    expect(effectiveStat(u, 'attack')).toBe(216);
   });
 });
 

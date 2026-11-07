@@ -296,6 +296,13 @@ const OVERRIDES: Record<string, Mechanic> = {
   '1132:2': (v) => [...attr('attack_buff')(v), ...attr('strategy_buff')(v)],
   // 不移：奋髯二阶为「受所有伤害降低 1.0%」（不限攻击伤害）
   '1135:2': reduce({}),
+
+  // 锻造词条（affix）属性提升按官方文案：骁锐/天资/稳固 为百分比（#5%~15%# / #10%~20%#），
+  // 但同名**自带特效**多为点数（承影天资 2.5、比翼天资 1.5…），故只对词条维度改成百分比；
+  // 灵动（速度）官方为点数（#10~30#），维持 MECHANICS 的点数口径。
+  'affix:骁锐': attr('attack_buff', true),
+  'affix:天资': attr('strategy_buff', true),
+  'affix:稳固': attr('defense_buff', true),
 };
 
 /** 尚未落地的词条（分档见方案 §3.2）；键 = 词条名，值 = 需要的机制 */

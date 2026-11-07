@@ -84,7 +84,7 @@ describe('预设面板 · 来源切换', () => {
     expect(texts('.preset-item .pi-no')).toEqual(['#1']);
     expect(texts('.preset-count')).toEqual([`我的预设 1 / ${PRESET_MAX} 条`]);
     expect(texts('.preset-detail .pd-title')).toEqual([MINE.name]);
-    expect(actions()).toEqual(['上场到红队', '上场到蓝队', '重命名', '删除']);
+    expect(actions()).toEqual(['上场到红队', '上场到蓝队', '导出', '重命名', '删除']);
   });
 
   it('搜索只作用于当前这一组（热门搜不到，切过去才命中）', () => {
@@ -122,7 +122,7 @@ describe('预设面板 · 来源切换', () => {
     mount({ getHotPresets: () => [HOT], getPresets: () => [MINE] });
     expect(texts('.preset-detail .pd-title')).toEqual([HOT.name]);
     expect(texts('.preset-detail .pd-time')).toEqual([`内置热门预设 · 版本 ${hotVersion()}`]);
-    expect(actions()).toEqual(['上场到红队', '上场到蓝队', '另存为我的预设']);
+    expect(actions()).toEqual(['上场到红队', '上场到蓝队', '另存为我的预设', '导出']);
   });
 
   it('「另存为我的预设」写进用户层，并把面板切到「我的预设」', () => {
@@ -151,6 +151,6 @@ describe('预设面板 · 来源切换', () => {
     expect((document.querySelector('.preset-tabs') as HTMLElement).hidden).toBe(true);
     expect(itemNames()).toEqual([MINE.name]);
     expect(texts('.preset-count')).toEqual([`我的预设 1 / ${PRESET_MAX} 条`]);
-    expect(actions()).toEqual(['上场到红队', '上场到蓝队', '重命名', '删除']);
+    expect(actions()).toEqual(['上场到红队', '上场到蓝队', '导出', '重命名', '删除']);
   });
 });
