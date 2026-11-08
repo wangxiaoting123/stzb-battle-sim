@@ -523,6 +523,9 @@ const handlers: EditorHandlers = {
     state[team] = [emptySlot(), emptySlot(), emptySlot()];
     refresh();
   },
+  getTeamSlots(team) {
+    return state[team];
+  },
 };
 
 // 触屏拖拽（长按武将卡拖动到槽位；HTML5 drag 在触屏不可用，仅触屏设备生效）

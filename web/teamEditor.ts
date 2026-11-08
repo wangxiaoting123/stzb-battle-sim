@@ -31,11 +31,14 @@ import {
 import type { BattleReport } from '../src/engine/types';
 import { computeTroopBonuses, ZERO_BONUS } from '../src/engine/troopBonus';
 import { applyChenshouPrepass } from '../src/engine/chenshou';
+import { buildTreasureStatuses } from '../src/engine/treasure';
 import {
   SECONDARY_TROOPS,
   TRAIT_SLOTS_MAX,
   effectiveTroopLine,
   traitsFor,
+  statModOf,
+  traitStatBonus,
   type GeneralTrait,
   type SecondaryTroopType,
 } from '../src/engine/secondaryTroop';
@@ -162,6 +165,8 @@ export interface EditorHandlers {
   onApplyLoadout?: (team: 'red' | 'blue', slotIndex: number, loadout: Loadout) => void;
   onRemoveHero: (team: 'red' | 'blue', slotIndex: number) => void;
   onClearTeam: (team: 'red' | 'blue') => void;
+  /** 拿到当前整队槽位（详情弹窗计算战斗属性用）；缺省时详情弹窗只显示面板属性 */
+  getTeamSlots?: (team: 'red' | 'blue') => SlotState[];
 }
 
 export const emptySlot = (): SlotState => ({ heroId: null, extraSkillIds: [], freePoints: { attack: 0, defense: 0, strategy: 0, speed: 0 }, redness: 0, level: 40, treasure: null });
@@ -1029,6 +1034,8 @@ export function openHeroDetail(heroId: string, opts: DetailOpts): void {
 
   /** 详情页三个板块（按参考图骨架划分，不照抄）：详情 / 配点 / 兵种 */
   let activeTab: 'detail' | 'points' | 'troop' | 'plans' = 'detail';
+  /** 属性面板展示模式：基础面板属性 vs 战斗中属性（阵营+兵种+称号等准备回合前全部结算后的数值） */
+  let attrMode: 'panel' | 'battle' = 'panel';
 
   const redraw = () => {
     // 左右布局（按参考图）：左边「阵营 + 名字 + 画像 + 星级」三个板块共用、切换时不重建内容；
@@ -1054,12 +1061,191 @@ export function openHeroDetail(heroId: string, opts: DetailOpts): void {
     const remain = Math.max(0, budget - used);
     const troops = troopCapacity(slot.level, r);
 
+    // ── 战斗属性分解：面板基础 + 二级兵种 + 兵种特性 + 队伍级阵营/兵种/称号 ──
+    const canCalcBattle = !!placed && !!h.getTeamSlots;
+    type AttrKey = 'attack' | 'defense' | 'strategy' | 'speed';
+    type AttrDetail = {
+      panel: number;
+      troopPermanent: number;
+      heishan: number;
+      trait: number;
+      treasureFlat: number;
+      treasurePct: number;
+      faction: number;
+      troopTeam: number;
+      title: number;
+      total: number;
+      selfGeneral: General | null;
+    };
+    let battleDetail: Record<AttrKey, AttrDetail> | null = null;
+    if (attrMode === 'battle' && canCalcBattle && placed) {
+      const POS: Array<General['position']> = ['大营', '中军', '前锋'];
+      const teamSlots = h.getTeamSlots!(placed.team);
+      const season = h.season ?? 'classic';
+      const generals: General[] = [];
+      for (let i = 0; i < teamSlots.length; i++) {
+        const s = teamSlots[i];
+        if (!s.heroId) continue;
+        const g = buildGeneralForSlot(s, POS[i], 120, season);
+        if (g) generals.push(g);
+      }
+      applyChenshouPrepass(generals);
+      const bonusResult = computeTroopBonuses(generals);
+      const selfGeneral = generals.find((g) => g.id === heroId || g.name === hero.name) ?? null;
+      if (selfGeneral) {
+        const unitLines = bonusResult.lines.filter((l) => l.unitId === selfGeneral.id);
+        const sumCat = (cat: string): FormationBonus =>
+          unitLines
+            .filter((l) => l.category === cat)
+            .reduce(
+              (acc, l) => ({
+                attack: acc.attack + l.bonuses.attack,
+                defense: acc.defense + l.bonuses.defense,
+                strategy: acc.strategy + l.bonuses.strategy,
+                speed: acc.speed + l.bonuses.speed,
+              }),
+              ZERO_BONUS
+            );
+        const fac = sumCat('faction');
+        const tro = sumCat('troop');
+        const tit = sumCat('title');
+        const heishan = (k: AttrKey): number => {
+          if (selfGeneral.secondaryTroop !== '黑山长弓') return 0;
+          const panel = { attack: selfGeneral.attack, defense: selfGeneral.defense, strategy: selfGeneral.strategy, speed: selfGeneral.speed };
+          const hi = Math.max(panel.attack, panel.defense, panel.strategy, panel.speed);
+          const lo = Math.min(panel.attack, panel.defense, panel.strategy, panel.speed);
+          return (panel[k] === hi ? 10 : 0) + (panel[k] === lo ? -20 : 0);
+        };
+
+        // 宝物属性提升：flat 点数 + 百分比（同 effectiveStat 口径，百分比乘面板 base）
+        const treasureStatuses = slot.treasure ? buildTreasureStatuses(slot.treasure, selfGeneral, []) : [];
+        const flatOf = (type: string): number => treasureStatuses
+          .filter((s) => s.create.type === type && !('percent' in s.create && (s.create as { percent?: boolean }).percent))
+          .reduce((acc, s) => acc + ((s.create as { amount?: number }).amount ?? 0), 0);
+        const pctOf = (type: string): number => treasureStatuses
+          .filter((s) => s.create.type === type && 'percent' in s.create && (s.create as { percent?: boolean }).percent)
+          .reduce((acc, s) => acc + ((s.create as { amount?: number }).amount ?? 0), 0);
+
+        const treasureFlat: Record<AttrKey, number> = {
+          attack: flatOf('attack_buff'),
+          defense: flatOf('defense_buff'),
+          strategy: flatOf('strategy_buff'),
+          speed: flatOf('speed_buff'),
+        };
+        const treasurePct: Record<AttrKey, number> = {
+          attack: pctOf('attack_buff'),
+          defense: pctOf('defense_buff'),
+          strategy: pctOf('strategy_buff'),
+          speed: pctOf('speed_buff'),
+        };
+
+        battleDetail = {
+          attack: {
+            panel: selfGeneral.attack,
+            troopPermanent: statModOf(selfGeneral.secondaryTroop, 'attack'),
+            heishan: heishan('attack'),
+            trait: traitStatBonus(selfGeneral, 'attack'),
+            treasureFlat: treasureFlat.attack,
+            treasurePct: treasurePct.attack,
+            faction: fac.attack,
+            troopTeam: tro.attack,
+            title: tit.attack,
+            total: 0,
+            selfGeneral,
+          },
+          defense: {
+            panel: selfGeneral.defense,
+            troopPermanent: statModOf(selfGeneral.secondaryTroop, 'defense'),
+            heishan: heishan('defense'),
+            trait: traitStatBonus(selfGeneral, 'defense'),
+            treasureFlat: treasureFlat.defense,
+            treasurePct: treasurePct.defense,
+            faction: fac.defense,
+            troopTeam: tro.defense,
+            title: tit.defense,
+            total: 0,
+            selfGeneral,
+          },
+          strategy: {
+            panel: selfGeneral.strategy,
+            troopPermanent: statModOf(selfGeneral.secondaryTroop, 'strategy'),
+            heishan: heishan('strategy'),
+            trait: traitStatBonus(selfGeneral, 'strategy'),
+            treasureFlat: treasureFlat.strategy,
+            treasurePct: treasurePct.strategy,
+            faction: fac.strategy,
+            troopTeam: tro.strategy,
+            title: tit.strategy,
+            total: 0,
+            selfGeneral,
+          },
+          speed: {
+            panel: selfGeneral.speed,
+            troopPermanent: statModOf(selfGeneral.secondaryTroop, 'speed'),
+            heishan: heishan('speed'),
+            trait: traitStatBonus(selfGeneral, 'speed'),
+            treasureFlat: treasureFlat.speed,
+            treasurePct: treasurePct.speed,
+            faction: fac.speed,
+            troopTeam: tro.speed,
+            title: tit.speed,
+            total: 0,
+            selfGeneral,
+          },
+        };
+        (Object.keys(battleDetail) as AttrKey[]).forEach((k) => {
+          const d = battleDetail![k];
+          const treasurePctBonus = Math.round(Math.abs((d.panel * d.treasurePct) / 100)) * Math.sign(d.treasurePct);
+          d.total = d.panel + d.troopPermanent + d.heishan + d.trait + d.treasureFlat + treasurePctBonus + d.faction + d.troopTeam + d.title;
+        });
+      }
+    }
+
+    const plus = (v: number): string => (v > 0 ? `+${v}` : `${v}`);
+    const diffCls = (v: number): string => (v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero');
+
     const statRows = STAT_NAMES.map(([k, name]) => {
-      const v = base[k] + (slot.freePoints[k] ?? 0);
+      const panelV = base[k] + (slot.freePoints[k] ?? 0);
+      if (attrMode === 'battle' && canCalcBattle && battleDetail) {
+        const d = battleDetail[k as AttrKey];
+        const items: Array<{ label: string; v: number }> = [
+          { label: '面板基础', v: d.panel },
+        ];
+        const troopTotal = d.troopPermanent + d.heishan;
+        if (troopTotal !== 0) items.push({ label: d.heishan !== 0 ? '黑山长弓' : '二级兵种特性', v: troopTotal });
+        if (d.trait !== 0) items.push({ label: '兵种通用特性', v: d.trait });
+        if (d.treasureFlat !== 0) items.push({ label: '宝物固定值', v: d.treasureFlat });
+        if (d.treasurePct !== 0) {
+          const treasurePctBonus = Math.round(Math.abs((d.panel * d.treasurePct) / 100)) * Math.sign(d.treasurePct);
+          items.push({ label: `宝物百分比(${plus(d.treasurePct)}%)`, v: treasurePctBonus });
+        }
+        if (d.faction !== 0) items.push({ label: '阵营加成', v: d.faction });
+        if (d.troopTeam !== 0) items.push({ label: '兵种加成', v: d.troopTeam });
+        if (d.title !== 0) items.push({ label: '称号加成', v: d.title });
+
+        const detailHtml = items
+          .map((it) => {
+            const isBase = it.label === '面板基础';
+            return `<div class="stat-detail-row">
+              <span class="sd-label">${it.label}</span>
+              <span class="sd-val ${isBase ? 'base' : diffCls(it.v)}">${isBase ? it.v : plus(it.v)}</span>
+            </div>`;
+          })
+          .join('');
+
+        return `
+          <div class="stat-row-battle">
+            <div class="stat-head">
+              <span class="k">${name}</span>
+              <span class="v-total">${d.total}</span>
+            </div>
+            <div class="stat-detail">${detailHtml}</div>
+          </div>`;
+      }
       return `
         <div class="stat-row">
           <span class="k">${name}</span>
-          <span class="v">${v}</span>
+          <span class="v">${panelV}</span>
           <span class="g">（+${grow[k].toFixed(2)}）</span>
         </div>`;
     }).join('');
@@ -1131,7 +1317,10 @@ export function openHeroDetail(heroId: string, opts: DetailOpts): void {
         </span>
         <span class="hd-budget">自由属性剩余 <b>${remain}</b> / ${budget} 点${r > 0 ? ` <i class="red-extra">（含红度 +${r * 10}）</i>` : ''}</span>
       </div>
-      <div class="hd-stats">${statRows}</div>
+      <div class="hd-stats-wrap">
+        ${canCalcBattle ? `<button type="button" class="hd-attr-toggle" data-attr-toggle title="切换面板属性 / 战斗属性（含阵营/兵种/称号加成）">${attrMode === 'panel' ? '面板属性' : '战斗属性'}</button>` : ''}
+        <div class="hd-stats${attrMode === 'battle' && canCalcBattle ? ' battle' : ''}">${statRows}</div>
+      </div>
       <div class="hd-skills">
         <div class="skills-title">战法${deputy ? '<span class="hd-deputy-tag">北伐副本 · 副将主战法占第二格</span>' : ''}</div>
         <div class="skills-row">${mainSkillEl}${equips}</div>
@@ -1578,6 +1767,12 @@ export function openHeroDetail(heroId: string, opts: DetailOpts): void {
           redraw();
         });
       };
+    });
+    // 属性面板切换（基础 ↔ 战斗属性）
+    const attrToggle = body.querySelector('[data-attr-toggle]') as HTMLElement | null;
+    attrToggle?.addEventListener('click', () => {
+      attrMode = attrMode === 'panel' ? 'battle' : 'panel';
+      redraw();
     });
 
     // ── 兵种转换板块（兵种二选一 + 通用特性 2 栏）──
