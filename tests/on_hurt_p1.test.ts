@@ -132,6 +132,7 @@ describe('before_damage 免疫当次', () => {
     expect(blocked).toBe(true);
 
     const me = dummyUnit('me', '前锋', { commandSkillIds: ['test_kc'] });
+    me.actCount = 3; // 模拟：carrier 已行动 3 次，超过 endRound=2 → 钩子停
     const ctxFail = makeCtx([me], [foe], 1);
     ctxFail.skills.set('test_kc', evadeSkill);
     ctxFail.currentRound = 3;

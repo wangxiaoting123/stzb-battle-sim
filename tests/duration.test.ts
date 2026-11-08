@@ -96,11 +96,17 @@ describe('行动前施加（准备阶段）：计数器回合末递减，「前N
     tickStatuses(ctx, [...ctx.myTeam, ...ctx.enemyTeam]);
     expect(hasStatus(ally, 'damage_reduce')).toBe(true);
 
-    // 回合 3 结束：1→0，消失（第4回合行动前不再有减伤）
+    // 回合 3 结束：ally 已行动第 3 次，damage_reduce remaining=0（还在身上，round_end 不清）
     ctx.currentRound = 3;
     actUnit(ctx, ally);
     actUnit(ctx, e1);
     tickStatuses(ctx, [...ctx.myTeam, ...ctx.enemyTeam]);
+    // remaining=0 还没被清，要等下一次 ally 行动开始时被 markStatusesOnActStart 的 filter 静默移除
+    expect(hasStatus(ally, 'damage_reduce')).toBe(true);
+
+    // 回合 4 开始：ally 行动前 filter 清掉 remaining≤0 的状态 → 消失
+    ctx.currentRound = 4;
+    actUnit(ctx, ally);
     expect(hasStatus(ally, 'damage_reduce')).toBe(false);
   });
 

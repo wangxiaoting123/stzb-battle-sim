@@ -5768,6 +5768,7 @@ export const SKILL_REGISTRY: Record<string, Skill> = {
           defenseScaled: true,
           growthRate: 0.375,
           damageType: 'physical',
+          roundTick: true,
         },
       },
     ],

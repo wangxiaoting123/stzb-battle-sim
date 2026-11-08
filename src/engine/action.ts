@@ -3162,6 +3162,8 @@ function isNextActTickStatus(s: Status): s is NextActTickStatus {
   if (s.type === 'damage_boost' && 'charges' in s && s.charges != null) return false;
   // 次数型分兵（鱼鳞 / 飒沓如星 / 散射）：按普攻次数消耗，不按回合递减（同 damage_boost.charges）
   if (s.type === 'split' && 'charges' in s && s.charges != null) return false;
+  // 显式标记走自然回合递减（一夫当关「前 2 回合」）——跳过行动递减管线，让 tickStatuses 按回合末统一递减
+  if ('roundTick' in s && (s as any).roundTick) return false;
   return true;
 }
 
@@ -3182,13 +3184,12 @@ function expiresAtRoundEnd(s: Status): boolean {
  *  - **窗口/时点型例外**（`priority` / `counter`）：仍走「行动开始前递减 + 即时移除」原逻辑——
  *    `priority` 的作用时点是回合初排序，改到行动结束后会被吃掉（实测 1→0）；`counter` 的窗口是
  *    「直到携带者下回合行动前」，窗口一开就到点。
- *  行动前施加（appliedRound=0）由回合末 tickStatuses 递减，不在此处理。 */
+ *  行动前施加（appliedRound=0）的 NEXT_ACT_TICK_TYPES 状态也走行动递减，
+ *  只有回合型状态（DoT/first_aid/insight/siege 等）仍由 tickStatuses 处理。 */
 function markStatusesOnActStart(ctx: CombatContext, unit: UnitState): ActEndCountingStatus[] {
   const marked: ActEndCountingStatus[] = [];
-  // 第 0 步：第 2 组里「上一轮已到期」的状态（remaining 已减到 ≤0）在本次行动开始前移除。
-  // 准备阶段施加（appliedRound=0）的仍由回合末 tickStatuses 递减，不在此处理。
   unit.statuses = unit.statuses.filter(
-    (s) => !(isNextActTickStatus(s) && s.appliedRound !== 0 && s.remaining <= 0)
+    (s) => !(isNextActTickStatus(s) && s.remaining <= 0)
   );
   for (const s of [...unit.statuses]) {
     if (s.type === 'evasion') continue; // 规避按层数，不递减
@@ -3214,7 +3215,9 @@ function markStatusesOnActStart(ctx: CombatContext, unit: UnitState): ActEndCoun
     }
     // first_aid：remaining 递减（Infinity 整场常驻恒不减；金匮要略前 3 回合到期移除）
     if (s.type === 'rest') continue; // 休整 remaining 只在跳恢复时递减
-    if (s.appliedRound === 0) continue; // 行动前施加：回合末递减
+    // NEXT_ACT_TICK_TYPES 不管施加时机都走行动递减（避其锋芒/无心恋战等指挥战法）
+    // 其他类型：appliedRound===0 → 回合末 tickStatuses 递减（cover/DoT/insight/siege/first_aid 等）
+    if (s.appliedRound === 0 && !isNextActTickStatus(s)) continue;
     if (expiresAtRoundEnd(s)) continue; // 本回合结束清除：不跟携带者行动走
     // 窗口/时点型例外：保持旧的「行动开始前递减 + 即时移除」（同回合刚施加的仍不计数）
     if (s.type === 'priority' || s.type === 'counter') {
@@ -3324,6 +3327,7 @@ export function actUnit(ctx: CombatContext, unit: UnitState): void {
   //    第 1 组 + 其余行动计数型只标记，待本次行动完全生效后再由 tickStatusesOnActEnd 递减（三出口统一调用）。
   //    statusesAtActStart：判断「本次行动之内才施加」的第 2 组状态（见 tickStatusesOnActEnd ②）。
   const statusesAtActStart = new Set(unit.statuses);
+  unit.actCount = (unit.actCount ?? 0) + 1;
   const actEndMarked = markStatusesOnActStart(ctx, unit);
   // 忠克猛烈：施法者行动时清除其施加的受击追加攻击标记（窗口「直到施法者下回合行动前」）
   expireRetaliateOnCasterAct(ctx, unit);
@@ -5193,6 +5197,10 @@ function pushStatus(
     if (casterId) {
       (push as { sourceUnitId?: string }).sourceUnitId = casterId;
     }
+    // 显式标记走自然回合递减（一夫当关「前 2 回合」）：跳过 NEXT_ACT_TICK 管线，由 tickStatuses 回合末统一递减
+    if ('roundTick' in create && (create as { roundTick?: true }).roundTick) {
+      (push as { roundTick?: true }).roundTick = true;
+    }
     if (type === 'trigger_boost' && 'skillTypes' in create && create.skillTypes) {
       (push as { skillTypes?: SkillType[] }).skillTypes = create.skillTypes;
     }
@@ -5700,8 +5708,13 @@ export function tickStatuses(ctx: CombatContext, units: UnitState[]): void {
       if (s.type === 'rest') continue; // 休整 remaining 只在跳恢复时递减
       // 次数型分兵（准备阶段施加）：不按回合递减
       if (s.type === 'split' && 'charges' in s && s.charges != null) continue;
-      // split/insight/siege/sorcery/burning/panic/unrest/first_aid 都按 remaining 递减
-      // （first_aid：Infinity 整场常驻恒不减；金匮要略前 3 回合到期移除）
+      // 行动递减型 NEXT_ACT_TICK_TYPES（damage_reduce / damage_boost / 属性buff / 控制等）：
+      // 已由 markStatusesOnActStart / tickStatusesOnActEnd 按携带者行动递减，不在回合末处理。
+      // 即使 remaining≤0 也不在这里清——要等到携带者下一次行动开始时由 markStatusesOnActStart
+      // 第 0 步 filter 静默清理，这样慢速武将最后一次行动后状态能活到下回合敌方先行动结束。
+      if (isNextActTickStatus(s)) continue;
+      // insight/siege/first_aid 按 remaining 回合递减（DoT因 appliedRound>0 已被 L5687 跳过）
+      // first_aid：Infinity 整场常驻恒不减；金匮要略前 3 回合到期移除
       s.remaining -= 1;
       if (s.remaining <= 0) {
         unit.statuses = unit.statuses.filter((x) => x !== s);
@@ -7925,7 +7938,7 @@ export function triggerAfterEnemyActWatch(ctx: CombatContext, actor: UnitState, 
       if (!skill || !cfg) continue;
       if (!cfg.kinds.includes(kind)) continue;
       if (cfg.startRound != null && ctx.currentRound < cfg.startRound) continue;
-      if (cfg.endRound != null && ctx.currentRound > cfg.endRound) continue;
+      if (cfg.endRound != null && (holder.actCount ?? 0) > cfg.endRound) continue;
       // 只监听本战法锁定的目标（一类指挥准备阶段登记的 targets；无登记时不做限制）
       const locked = ctx.lockedCommands.find((l) => l.skill.id === skill.id && l.casterId === holder.general.id);
       if (locked && !locked.targets.includes(actor)) continue;
@@ -8291,7 +8304,10 @@ function triggerAllyDealStack(ctx: CombatContext, source: UnitState, damageType?
     if (!source.alive) return;
     if (cfg.damageType && cfg.damageType !== damageType) continue;
     // 窗口 / 士气门槛（悬权而动「战斗前 2 回合」「士气低于 160 时」）
-    if (cfg.endRound != null && ctx.currentRound > cfg.endRound) continue;
+    if (cfg.endRound != null) {
+      const caster = casterId ? castUnit(ctx, casterId) : undefined;
+      if ((caster?.actCount ?? 0) > cfg.endRound) continue;
+    }
     if (cfg.requireMoraleBelow != null && effectiveMorale(source) >= cfg.requireMoraleBelow) continue;
     if (cfg.rate != null) {
       // 按几率叠层（反间 / 知己知彼）：走**原施法者**士气修正，逐次发 skill_trigger
@@ -12062,7 +12078,7 @@ function triggerOnHurt(
           if (hookTiming !== timing) continue;
           if (cfg.damageSource === 'basic' && damageSource === 'skill') continue;
           if (cfg.startRound != null && ctx.currentRound < cfg.startRound) continue;
-          if (cfg.endRound != null && ctx.currentRound > cfg.endRound) continue;
+          if (cfg.endRound != null && (caster.actCount ?? 0) > cfg.endRound) continue;
           if (!matchOnHurtVictim(ctx, skill, cfg, caster, victim)) continue;
           // 站位条件（美人计：仅前锋）
           if (cfg.victimPositions && !cfg.victimPositions.includes(victim.general.position)) continue;

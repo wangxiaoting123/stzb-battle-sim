@@ -141,8 +141,9 @@ describe('敌军行动后监听（afterEnemyAct）', () => {
   });
 
   it('窗口外（第 4 回合）不判定', () => {
-    const { ctx, atk } = setup();
+    const { ctx, atk, holder } = setup();
     ctx.currentRound = 4;
+    holder.actCount = 4; // 模拟：holder 已行动 4 次，超过 endRound=3 → 钩子停
     stubRng(ctx, true, 0);
     triggerAfterEnemyActWatch(ctx, atk, 'active');
     expect(triggerEvent(ctx)).toBeNull();

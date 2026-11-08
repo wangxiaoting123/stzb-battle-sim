@@ -61,6 +61,7 @@ function unit(g: General, side: 'my' | 'enemy'): UnitState {
 
 function scene(round: number) {
   const carrier = unit(gen('u', '中军', { commandSkillIds: ['shiji'] }), 'my');
+  carrier.actCount = round; // 模拟：第 round 回合 carrier 已行动 round 次（carrier fast 场景）
   const bigCamp = unit(gen('h', '大营'), 'my');
   const foes = [
     unit(gen('e1', '前锋'), 'enemy'),
