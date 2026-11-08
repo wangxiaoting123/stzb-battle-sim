@@ -1484,22 +1484,21 @@ function triggerStrategyAdjacentBonus(
       );
       const capped = applyTroopCap(damage, raw.troops);
       const mods = collectDamageModifiers(ctx, source, raw, true, hit);
-      ctx.events.push({
-        type: 'damage',
-        sourceId: source.general.id,
-        targetId: raw.general.id,
-        skillId: l.skill.id,
-        skillName: l.skill.name,
-        damageType: 'strategy',
-        damage: capped,
-        breakdown,
-        modifiers: mods,
-        creditToId: source.general.id === owner.general.id ? undefined : owner.general.id,
-        // 诛杀（包内机制码 546 株杀 = 其徐如林 的「相邻跳伤」）：详情战报在这笔伤害旁标〈诛杀〉，
-        // 才看得出哪部分是跳伤、哪部分是别的战法打出来的策略伤害（用户 2026-10-23 口径）。
-        subSkill: '诛杀',
+      applyDamage(ctx, raw, capped, source, 'strategy', 'skill', mods, { skillType: l.skill.type }, () => {
+        ctx.events.push({
+          type: 'damage',
+          sourceId: source.general.id,
+          targetId: raw.general.id,
+          skillId: l.skill.id,
+          skillName: l.skill.name,
+          damageType: 'strategy',
+          damage: capped,
+          breakdown,
+          modifiers: mods,
+          creditToId: source.general.id === owner.general.id ? undefined : owner.general.id,
+          subSkill: '诛杀',
+        });
       });
-      applyDamage(ctx, raw, capped, source, 'strategy', 'skill', mods, { skillType: l.skill.type });
     }
   }
 }
@@ -1588,6 +1587,17 @@ export function triggerDelayedOutputs(ctx: CombatContext, round: number): void {
         const damageType: DamageType = skill.delayedOutput.output.some((o) => o.kind === 'strategy_damage')
           ? 'strategy'
           : 'physical';
+        // 预存伤害的 ignoresEvasion（白衣渡江等）：output 上标记 → applyDamage 内统一 consumeEvasion 需跳过目标 evasion
+        const outIgnoresEvasion = skill.delayedOutput.output.some(
+          (o) => 'ignoresEvasion' in o && o.ignoresEvasion === true
+        );
+        const hit: DamageHitContext = {
+          damageSource: 'skill',
+          damageType,
+          skillType: skill.type,
+          skillId: skill.id,
+          ignoresEvasion: outIgnoresEvasion,
+        };
         for (const d of l.storedDamage) {
           const target = ctx.myTeam.concat(ctx.enemyTeam).find((u) => u.general.id === d.targetId);
           if (!target || !target.alive) continue;
@@ -1619,7 +1629,7 @@ export function triggerDelayedOutputs(ctx: CombatContext, round: number): void {
             skillName: skill.name,
             damageType,
           });
-          if (!immune) applyDamage(ctx, target, d.damage, caster, damageType, 'skill');
+          if (!immune) applyDamage(ctx, target, d.damage, caster, damageType, 'skill', undefined, hit);
         }
       } else if (caster) {
         // 非伤害类延迟输出（令明负榇：第 4 回合起进入分兵状态）→ 对锁定目标执行 output
@@ -2267,20 +2277,20 @@ function executeRoundCommand(ctx: CombatContext, unit: UnitState, skill: Command
         );
         const capped = applyTroopCap(damage, t.troops);
       const mods = collectDamageModifiers(ctx, source, t, true, hit, { ignoresTroopCounter: out.ignoresTroopCounter });
-      ctx.events.push({
-        type: 'damage',
-        sourceId: source.general.id,
-        // 借速度最高友军攻击（奇兵拒北）：杀伤统计归属施法者（creditToId），而非实际打人者
-        creditToId: source.general.id === unit.general.id ? undefined : unit.general.id,
-        targetId: t.general.id,
-        skillId: skill.id,
-        skillName: skill.name,
-        damageType: 'physical',
-        damage: capped,
-        breakdown,
-        modifiers: mods,
+      applyDamage(ctx, t, capped, source, 'physical', 'skill', mods, { skillType: skill.type }, () => {
+        ctx.events.push({
+          type: 'damage',
+          sourceId: source.general.id,
+          creditToId: source.general.id === unit.general.id ? undefined : unit.general.id,
+          targetId: t.general.id,
+          skillId: skill.id,
+          skillName: skill.name,
+          damageType: 'physical',
+          damage: capped,
+          breakdown,
+          modifiers: mods,
+        });
       });
-      applyDamage(ctx, t, capped, source, 'physical', 'skill', mods, { skillType: skill.type });
     }
     if (attacked) consumeAttackCharges(ctx, source, { damageSource: 'skill', damageType: 'physical', skillType: 'command' });
   }
@@ -2780,7 +2790,7 @@ export function dealDotDamage(
   // 普攻触发动摇（威震逍遥）：仅该口径的动摇可被规避（张辽【追加】「动摇效果无视规避」→ 跳过判定）。
   // 既有「行动时跳伤」DoT 一律不经规避判定，保持零回归。
   if (dot.type === 'unrest' && dot.triggerOnBasic && !dot.ignoresEvasionOnTick) {
-    if (consumeEvasion(ctx, unit, dot.sourceUnitId ?? '')) return;
+    if (consumeEvasion(ctx, unit, dot.sourceUnitId ?? '', undefined, true)) return;
   }
   const src = dot.sourceUnitId ? castUnit(ctx, dot.sourceUnitId) : undefined;
   // 动摇按物理伤害结算；其余 DoT 按策略伤害结算
@@ -2791,6 +2801,7 @@ export function dealDotDamage(
     damageType,
     dotType: dot.type,
     ...(dot.sourceSkillId ? { skillId: dot.sourceSkillId } : {}),
+    ...(dot.type === 'unrest' && dot.triggerOnBasic && dot.ignoresEvasionOnTick ? { ignoresEvasion: true } : {}),
   };
   // 策略 DoT：友军施法者叠谋略；物理 DoT（动摇）：友军施法者叠攻击；受击者两类都叠防御（持节镇西）
   if (src) {
@@ -2799,21 +2810,19 @@ export function dealDotDamage(
   if (dot.stored) {
     // 滞后触发：挂上时已结算（增伤/兵力/减伤冻结），仅按目标当前兵力截断
     const capped = applyTroopCap(dot.stored.damage, unit.troops);
-    ctx.events.push({
-      type: 'dot_tick',
-      // sourceId = 伤害归属者（施法者）；施法者不可解析时才退回受击者自身。
-      // `targetId` 恒为受击者 —— 与 damage / attack_hit 的口径一致（见 annotateAfterTroops）。
-      sourceId: src?.general.id ?? unit.general.id,
-      targetId: unit.general.id,
-      dotType: dot.type,
-      skillId: dot.sourceSkillId,
-      casterId: dot.sourceUnitId ?? '',
-      damage: capped,
-      breakdown: dot.stored.breakdown,
-      // 挂上时冻结的增减伤归因
-      modifiers: dot.stored.modifiers,
+    const dotOk = applyDamage(ctx, unit, capped, src, damageType, 'skill', dot.stored.modifiers, dotHit, () => {
+      ctx.events.push({
+        type: 'dot_tick',
+        sourceId: src?.general.id ?? unit.general.id,
+        targetId: unit.general.id,
+        dotType: dot.type,
+        skillId: dot.sourceSkillId,
+        casterId: dot.sourceUnitId ?? '',
+        damage: capped,
+        breakdown: dot.stored.breakdown,
+        modifiers: dot.stored.modifiers,
+      });
     });
-    applyDamage(ctx, unit, capped, src, damageType, 'skill', dot.stored.modifiers, dotHit);
     // 其徐如林〈诛杀〉：这一跳同样是一次「策略伤害生效」，对相邻敌军额外溅射
     triggerStrategyAdjacentBonusOnDot(ctx, unit, dot, src, capped);
     // 敌军每回合首次受到持续性伤害（衔命建功）
@@ -2861,20 +2870,19 @@ export function dealDotDamage(
       })();
   const capped = applyTroopCap(fb.damage, unit.troops);
   const fbMods = fb.modifiers;
-  ctx.events.push({
-    type: 'dot_tick',
-    // sourceId = 伤害归属者（施法者）；施法者不可解析时才退回受击者自身。
-    // `targetId` 恒为受击者 —— 与 damage / attack_hit 的口径一致（见 annotateAfterTroops）。
-    sourceId: src?.general.id ?? unit.general.id,
-    targetId: unit.general.id,
-    dotType: dot.type,
-    skillId: dot.sourceSkillId,
-    casterId: dot.sourceUnitId ?? '',
-    damage: capped,
-    breakdown: fb.breakdown,
-    modifiers: fbMods,
+  const fbOk = applyDamage(ctx, unit, capped, src, damageType, 'skill', fbMods, dotHit, () => {
+    ctx.events.push({
+      type: 'dot_tick',
+      sourceId: src?.general.id ?? unit.general.id,
+      targetId: unit.general.id,
+      dotType: dot.type,
+      skillId: dot.sourceSkillId,
+      casterId: dot.sourceUnitId ?? '',
+      damage: capped,
+      breakdown: fb.breakdown,
+      modifiers: fbMods,
+    });
   });
-  applyDamage(ctx, unit, capped, src, damageType, 'skill', fbMods, dotHit);
   // 其徐如林〈诛杀〉：这一跳同样是一次「策略伤害生效」，对相邻敌军额外溅射
   triggerStrategyAdjacentBonusOnDot(ctx, unit, dot, src, capped);
   // 敌军每回合首次受到持续性伤害（衔命建功）
@@ -3052,7 +3060,7 @@ function executeSplitAttack(
     // 常驻伤害前叠层
     triggerStackBuff(ctx, unit, adjTarget, 'physical');
     // 规避
-    if (consumeEvasion(ctx, adjTarget, unit.general.id)) continue;
+    if (consumeEvasion(ctx, adjTarget, unit.general.id, undefined, true)) continue;
     const atk = effectiveStat(unit, 'attack');
     const def = physicalTargetDefense(unit, adjTarget);
     const hit: DamageHitContext = { damageSource: 'basic', damageType: 'physical', split: true };
@@ -3073,18 +3081,18 @@ function executeSplitAttack(
     );
     const capped = applyTroopCap(damage, adjTarget.troops);
     const splitMods = collectDamageModifiers(ctx, unit, adjTarget, true, hit);
-    ctx.events.push({
-      type: 'split_damage',
-      sourceId: unit.general.id,
-      targetId: adjTarget.general.id,
-      damage: capped,
-      breakdown,
-      modifiers: splitMods,
-      // 来源战法（统计计入该战法杀伤）+ 施法者归属（长兵方阵挂友军时 ≠ sourceId）
-      skillId: split.sourceSkillId,
-      creditToId,
+    applyDamage(ctx, adjTarget, capped, unit, 'physical', 'skill', splitMods, undefined, () => {
+      ctx.events.push({
+        type: 'split_damage',
+        sourceId: unit.general.id,
+        targetId: adjTarget.general.id,
+        damage: capped,
+        breakdown,
+        modifiers: splitMods,
+        skillId: split.sourceSkillId,
+        creditToId,
+      });
     });
-    applyDamage(ctx, adjTarget, capped, unit, 'physical', 'skill', splitMods);
   }
 }
 
@@ -6001,29 +6009,35 @@ export function consumeEvasion(
   ctx: CombatContext,
   target: UnitState,
   sourceId: string,
-  hit?: DamageHitContext
+  hit?: DamageHitContext,
+  skipIgnoreConsume = false
 ): boolean {
-  // 缚父临危：攻击方带「下一次造成的伤害无视规避」标记时，跳过规避判定并消耗该标记
-  // （覆盖任意伤害类型；所有伤害路径统一经本入口，故只此一处接线）
+  // 无视规避：攻击方带 ignore_evasion 时，跳过目标所有规避判定并（可选）消耗该标记。
+  // - skipIgnoreConsume=true（外部预调用：普攻/技能在 applyDamage 外先查一次目标已有的 evasion）：
+  //   ignore_evasion 存在 → 仅返回 false（不被规避），**不消耗** ignore_evasion 也**不消耗**目标 evasion。
+  //   这样 applyDamage 内部最终的 consumeEvasion 才能同时消耗 ignore + 跳过 before_damage 钩子新挂的 evasion。
+  // - skipIgnoreConsume=false（applyDamage 内部最终判定：triggerOnHurt before_damage 后）：
+  //   ignore_evasion 存在 → 在此处**唯一一次消耗**，然后返回 false（跳过目标已有的 + 新挂的 evasion）。
+  // 不存在 ignore 时，正常消耗目标 evasion 状态栈 / evade_chance 概率。
   const attacker = sourceId ? castUnit(ctx, sourceId) : undefined;
   const ignore = attacker?.statuses.find(
     (s): s is Extract<Status, { type: 'ignore_evasion' }> =>
       s.type === 'ignore_evasion' &&
-      // 宝物「识破」：限定前 N 回合（不消耗）；缺省 = 消耗制（缚父临危，见下）
       (s.throughRound == null || ctx.currentRound <= s.throughRound) &&
-      // 宝物「奋武」：只在**普通攻击**且造成侧增伤 > 阈值时生效（不消耗）
       (s.requireBasicBoostOver == null ||
         (hit?.damageSource === 'basic' &&
           damageBoosts(ctx, attacker!, target, hit).causedMult - 1 > s.requireBasicBoostOver))
   );
   if (attacker && ignore) {
-    // throughRound 型（识破）/ 条件型（奋武）不消耗，仅在窗口/条件内生效
-    if (ignore.throughRound == null && ignore.requireBasicBoostOver == null) {
+    if (!skipIgnoreConsume && ignore.throughRound == null && ignore.requireBasicBoostOver == null) {
       attacker.statuses = attacker.statuses.filter((s) => s !== ignore);
       ctx.events.push({ type: 'status_expired', unitId: attacker.general.id, statusType: 'ignore_evasion' });
     }
     return false;
   }
+  // 本次伤害自身带「跳过规避判定」标记（如动摇 DoT 的 ignoresEvasionOnTick 口径），
+  // 完全跳过目标 evasion / evade_chance 判定。与攻击者 ignore_evasion 是两套独立机制。
+  if (hit?.ignoresEvasion) return false;
   const ev = getStatus(target, 'evasion');
   if (ev && ev.stacks > 0) {
     ev.stacks -= 1;
@@ -6161,6 +6175,9 @@ export type DamageHitContext = {
   split?: boolean;
   /** 本次伤害按「进行攻击」口径计入（乘间击隙 240% 群体攻击）：供 `attackOnly` 增伤判定 */
   attack?: boolean;
+  /** 本次伤害**完全跳过目标 evasion 判定**（如动摇 DoT 的 ignoresEvasionOnTick 口径）。
+   *  不影响攻击者 ignore_evasion 的消耗——该消耗仍由正常路径处理 */
+  ignoresEvasion?: boolean;
 };
 
 /**
@@ -8010,7 +8027,7 @@ export function triggerTreasureStrikes(ctx: CombatContext, unit: UnitState): voi
     if (inRange.length === 0) continue;
     const target = inRange[ctx.rng.int(inRange.length)];
     const hit: DamageHitContext = { damageSource: 'skill', damageType: 'physical', skillType: 'passive' };
-    if (consumeEvasion(ctx, target, unit.general.id, hit)) continue;
+    if (consumeEvasion(ctx, target, unit.general.id, hit, true)) continue;
     const { causedMult, takenMult } = damageBoosts(ctx, unit, target, hit);
     const reduce = sumReduce(ctx, target, hit, unit);
     const { damage, breakdown } = calcDamage(
@@ -8028,18 +8045,19 @@ export function triggerTreasureStrikes(ctx: CombatContext, unit: UnitState): voi
     );
     const capped = applyTroopCap(damage, unit.troops);
     const mods = collectDamageModifiers(ctx, unit, target, true, hit);
-    ctx.events.push({
-      type: 'damage',
-      sourceId: unit.general.id,
-      targetId: target.general.id,
-      skillId: 'treasure_chuanying',
-      skillName: '穿影',
-      damageType: 'physical',
-      damage: capped,
-      breakdown,
-      modifiers: mods,
+    applyDamage(ctx, target, capped, unit, 'physical', 'skill', mods, { skillType: 'passive' }, () => {
+      ctx.events.push({
+        type: 'damage',
+        sourceId: unit.general.id,
+        targetId: target.general.id,
+        skillId: 'treasure_chuanying',
+        skillName: '穿影',
+        damageType: 'physical',
+        damage: capped,
+        breakdown,
+        modifiers: mods,
+      });
     });
-    applyDamage(ctx, target, capped, unit, 'physical', 'skill', mods, { skillType: 'passive' });
   }
 }
 
@@ -8074,18 +8092,19 @@ function triggerDealPunish(ctx: CombatContext, source: UnitState): void {
     );
     const capped = applyTroopCap(damage, source.troops);
     const dpMods = collectDamageModifiers(ctx, caster, source, true, hit);
-    ctx.events.push({
-      type: 'damage',
-      sourceId: caster.general.id,
-      targetId: source.general.id,
-      skillId: skill.id,
-      skillName: skill.name,
-      damageType: 'strategy',
-      damage: capped,
-      breakdown,
-      modifiers: dpMods,
+    applyDamage(ctx, source, capped, caster, 'strategy', 'skill', dpMods, { skillType: skill.type }, () => {
+      ctx.events.push({
+        type: 'damage',
+        sourceId: caster.general.id,
+        targetId: source.general.id,
+        skillId: skill.id,
+        skillName: skill.name,
+        damageType: 'strategy',
+        damage: capped,
+        breakdown,
+        modifiers: dpMods,
+      });
     });
-    applyDamage(ctx, source, capped, caster, 'strategy', 'skill', dpMods, { skillType: skill.type });
   }
 }
 
@@ -9196,10 +9215,10 @@ function executeSkillOutputs(
                 : false;
               const damageType: DamageType = useStrategy ? 'strategy' : 'physical';
               triggerStackBuff(ctx, rider, t, damageType);
-              if (!out.ignoresEvasion && consumeEvasion(ctx, t, rider.general.id)) continue;
+              if (!out.ignoresEvasion && consumeEvasion(ctx, t, rider.general.id, undefined, true)) continue;
               const atk = effectiveStat(rider, 'attack');
               const def = useStrategy ? t.general.defense : physicalTargetDefense(rider, t);
-              const hit: DamageHitContext = { damageSource: 'skill', damageType, skillType: skill.type, skillId: skill.id };
+              const hit: DamageHitContext = { damageSource: 'skill', damageType, skillType: skill.type, skillId: skill.id, ignoresEvasion: out.ignoresEvasion };
               const { causedMult, takenMult } = damageBoosts(ctx, rider, t, hit);
               const counterReduce = out.ignoresTroopCounter ? 0 : troopCounterReduceOf(rider, t);
               const reduce = sumReduce(ctx, t, hit, rider) + counterReduce;
@@ -9225,18 +9244,19 @@ function executeSkillOutputs(
               );
               const capped = applyTroopCap(damage, t.troops);
               const rideMods = collectDamageModifiers(ctx, rider, t, true, hit, { ignoresTroopCounter: out.ignoresTroopCounter });
-              ctx.events.push({
-                type: 'damage',
-                sourceId: rider.general.id,
-                targetId: t.general.id,
-                skillId: skill.id,
-                skillName: skill.name,
-                damageType,
-                damage: capped,
-                breakdown,
-                modifiers: rideMods,
+              applyDamage(ctx, t, capped, rider, damageType, 'skill', rideMods, { skillType: skill.type }, () => {
+                ctx.events.push({
+                  type: 'damage',
+                  sourceId: rider.general.id,
+                  targetId: t.general.id,
+                  skillId: skill.id,
+                  skillName: skill.name,
+                  damageType,
+                  damage: capped,
+                  breakdown,
+                  modifiers: rideMods,
+                });
               });
-              applyDamage(ctx, t, capped, rider, damageType, 'skill', rideMods, { skillType: skill.type });
             }
             if (riderAttacked) consumeAttackCharges(ctx, rider, { damageSource: 'skill', damageType: 'physical', skillType: skill.type });
           }
@@ -9301,7 +9321,7 @@ function executeSkillOutputs(
             // 规避：默认免疫一次伤害；ignoresEvasion 时无视；ignoresEvasionFirstRepeat 仅第 1 次无视（华雄）
             const ignoreEv =
               out.ignoresEvasion === true || (out.ignoresEvasionFirstRepeat === true && hitI === 0);
-            if (!ignoreEv && consumeEvasion(ctx, t, source.general.id)) continue;
+            if (!ignoreEv && consumeEvasion(ctx, t, source.general.id, undefined, true)) continue;
             const atk = effectiveStat(source, 'attack');
             const def = physicalTargetDefense(source, t, out.ignoresDefense === true);
             const hit: DamageHitContext = {
@@ -9309,6 +9329,7 @@ function executeSkillOutputs(
               damageType: 'physical',
               skillType: skill.type,
               skillId: skill.id,
+              ignoresEvasion: ignoreEv,
               ...(out.asAttack ? { attack: true as const } : {}),
             };
             const { causedMult, takenMult } = damageBoosts(ctx, source, t, hit);
@@ -9340,20 +9361,20 @@ function executeSkillOutputs(
             );
             const capped = applyTroopCap(damage, t.troops);
             const physMods = collectDamageModifiers(ctx, source, t, true, hit, { ignoresTroopCounter: out.ignoresTroopCounter });
-            ctx.events.push({
-              type: 'damage',
-              sourceId: source.general.id,
-              // 借谋略最低友军攻击（怀德畏威）：杀伤统计归属施法者
-              creditToId: source.general.id === caster.general.id ? undefined : caster.general.id,
-              targetId: t.general.id,
-              skillId: skill.id,
-              skillName: skill.name,
-              damageType: 'physical',
-              damage: capped,
-              breakdown,
-              modifiers: physMods,
+            applyDamage(ctx, t, capped, source, 'physical', 'skill', physMods, { skillType: skill.type }, () => {
+              ctx.events.push({
+                type: 'damage',
+                sourceId: source.general.id,
+                creditToId: source.general.id === caster.general.id ? undefined : caster.general.id,
+                targetId: t.general.id,
+                skillId: skill.id,
+                skillName: skill.name,
+                damageType: 'physical',
+                damage: capped,
+                breakdown,
+                modifiers: physMods,
+              });
             });
-            applyDamage(ctx, t, capped, source, 'physical', 'skill', physMods, { skillType: skill.type });
             // 按造成伤害次数递增发动率（霸王渡江）：本战法每造成 1 次伤害计 1 层（上限 maxStacks）
             if (skill.chanceBoostPerDamage && capped > 0) {
               ctx.skillDamageCounters ??= new Map();
@@ -9468,7 +9489,7 @@ function executeSkillOutputs(
             // 常驻伤害前叠层（持节镇西）：施法者叠谋略、受击者叠防御
             triggerStackBuff(ctx, stratSrc, t, 'strategy');
             // 规避：默认免疫一次伤害；ignoresEvasion 时无视
-            if (!out.ignoresEvasion && consumeEvasion(ctx, t, stratSrc.general.id)) continue;
+            if (!out.ignoresEvasion && consumeEvasion(ctx, t, stratSrc.general.id, undefined, true)) continue;
             // 叠层后再读生效谋略（与攻击伤害先叠攻击再读 effectiveStat 对齐；
             // 群体逐目标叠层，每段伤害吃到截至本目标的全部层）
             const effStrategy = effectiveStat(stratSrc, 'strategy');
@@ -9485,6 +9506,7 @@ function executeSkillOutputs(
               damageType: 'strategy',
               skillType: skill.type,
               skillId: skill.id,
+              ignoresEvasion: out.ignoresEvasion,
               // 火积「立即受到燃烧伤害」：按燃烧公式结算，并以 dotType 参与「受到燃烧伤害提升」等过滤
               ...(out.dotFormula ? { dotType: 'burning' as DotType } : {}),
             };
@@ -9515,27 +9537,25 @@ function executeSkillOutputs(
             );
             const capped = applyTroopCap(damage, t.troops);
             const stratMods = collectDamageModifiers(ctx, stratSrc, t, true, hit);
-            ctx.events.push({
-              type: 'damage',
-              sourceId: stratActor.general.id,
-              // 代打（西陵克晋 / 守静却敌）：杀伤统计归属施法者
-              creditToId: stratActor.general.id === caster.general.id ? undefined : caster.general.id,
-              targetId: t.general.id,
-              skillId: skill.id,
-              skillName: skill.name,
-              damageType: 'strategy',
-              damage: capped,
-              breakdown,
-              modifiers: stratMods,
-              // 本次实际生效伤害率（%）：战报详情用它显示「伤害率 X%」，可核对浮动是否生效
-              damageRate: round1(rate),
-              ...(fluxHit ? { rateFlux: fluxHit } : {}),
-              // 机制 161「无视敌方属性」（未雨绸缪再次发动）：战报要能看见「无视目标 X% 谋略属性」
-              ...(ignorePct > 0
-                ? { ignoreStrategy: { pct: Math.round(ignorePct * 100), skillId: 'weiyu_choumou', skillName: '未雨绸缪' } }
-                : {}),
+            applyDamage(ctx, t, capped, stratActor, 'strategy', 'skill', stratMods, { skillType: skill.type }, () => {
+              ctx.events.push({
+                type: 'damage',
+                sourceId: stratActor.general.id,
+                creditToId: stratActor.general.id === caster.general.id ? undefined : caster.general.id,
+                targetId: t.general.id,
+                skillId: skill.id,
+                skillName: skill.name,
+                damageType: 'strategy',
+                damage: capped,
+                breakdown,
+                modifiers: stratMods,
+                damageRate: round1(rate),
+                ...(fluxHit ? { rateFlux: fluxHit } : {}),
+                ...(ignorePct > 0
+                  ? { ignoreStrategy: { pct: Math.round(ignorePct * 100), skillId: 'weiyu_choumou', skillName: '未雨绸缪' } }
+                  : {}),
+              });
             });
-            applyDamage(ctx, t, capped, stratActor, 'strategy', 'skill', stratMods, { skillType: skill.type });
             // 其徐如林：本侧施加的策略伤害生效后，对目标同侧相邻敌军额外造成一次策略伤害（原伤害率 × 比例）
             // 代打段（recipient / highest_strategy_ally）由**实际出手的那名友军**口径结算
             // （否则溅射会错用施法者的兵力/谋略/增减伤；非代打路径仍传 caster，零回归）
@@ -10088,19 +10108,20 @@ function executeSkillOutputs(
           );
           const capped = applyTroopCap(damage, t.troops);
           const posMods = collectDamageModifiers(ctx, source, t, true, hit, { ignoresTroopCounter: out.ignoresTroopCounter });
-          ctx.events.push({
-            type: 'damage',
-            sourceId: source.general.id,
-            creditToId: source.general.id === caster.general.id ? undefined : caster.general.id,
-            targetId: t.general.id,
-            skillId: skill.id,
-            skillName: skill.name,
-            damageType: 'physical',
-            damage: capped,
-            breakdown,
-            modifiers: posMods,
+          applyDamage(ctx, t, capped, source, 'physical', 'skill', posMods, { skillType: skill.type }, () => {
+            ctx.events.push({
+              type: 'damage',
+              sourceId: source.general.id,
+              creditToId: source.general.id === caster.general.id ? undefined : caster.general.id,
+              targetId: t.general.id,
+              skillId: skill.id,
+              skillName: skill.name,
+              damageType: 'physical',
+              damage: capped,
+              breakdown,
+              modifiers: posMods,
+            });
           });
-          applyDamage(ctx, t, capped, source, 'physical', 'skill', posMods, { skillType: skill.type });
         }
         rememberDamageTargets(selectedIds);
         if (attacked) consumeAttackCharges(ctx, source, { damageSource: 'skill', damageType: 'physical', skillType: skill.type });
@@ -11414,7 +11435,7 @@ function dealAttack(ctx: CombatContext, unit: UnitState, target: UnitState): Uni
   const capped = applyTroopCap(damage, hit.troops);
 
   // 规避：命中前判定免疫（传入本次普攻口径，供宝物「奋武」判增伤阈值）
-  if (consumeEvasion(ctx, hit, unit.general.id, hitCtx)) {
+  if (consumeEvasion(ctx, hit, unit.general.id, hitCtx, true)) {
     consumeAttackCharges(ctx, unit, { damageSource: 'basic', damageType: 'physical' });
     // 奉令护蜀：本次普攻已打出 → 只清**增伤层**（减伤层保留，两段独立计数）
     consumePendingBoostStacks(ctx, unit);
@@ -11425,16 +11446,17 @@ function dealAttack(ctx: CombatContext, unit: UnitState, target: UnitState): Uni
   accumulateStacksConsume(ctx, unit, (mult - 1) * 100);
 
   const basicMods = collectDamageModifiers(ctx, unit, hit, true, hitCtx);
-  ctx.events.push({
-    type: 'attack_hit',
-    sourceId: unit.general.id,
-    targetId: hit.general.id,
-    distance,
-    damage: capped,
-    breakdown,
-    modifiers: basicMods,
+  applyDamage(ctx, hit, capped, unit, 'physical', 'basic', basicMods, hitCtx, () => {
+    ctx.events.push({
+      type: 'attack_hit',
+      sourceId: unit.general.id,
+      targetId: hit.general.id,
+      distance,
+      damage: capped,
+      breakdown,
+      modifiers: basicMods,
+    });
   });
-  applyDamage(ctx, hit, capped, unit, 'physical', 'basic', basicMods);
   // 普攻命中后钩子（疾风迅雷）：未被规避且命中目标存活时判定
   triggerBasicHitHooks(ctx, unit, hit);
   consumeAttackCharges(ctx, unit, { damageSource: 'basic', damageType: 'physical' });
@@ -11967,7 +11989,8 @@ function triggerOnHurt(
   source?: UnitState,
   damageType?: DamageType,
   damageSource?: 'basic' | 'skill',
-  timing: 'before_damage' | 'after_damage' = 'after_damage'
+  timing: 'before_damage' | 'after_damage' = 'after_damage',
+  hit?: DamageHitContext
 ): { thisHitReduce: number; evasionBlocked: boolean } {
   const none = { thisHitReduce: 0, evasionBlocked: false };
   if (ctx.resolvingHurtHooks) return none;
@@ -12070,12 +12093,6 @@ function triggerOnHurt(
               const outs = cfg.output;
               if (outs && outs.length > 0) {
                 applyOnHurtEffect(ctx, caster, skill, cfg, victim, source);
-                if (outs.some((o) => o.kind === 'grant_evasion')) {
-                  if (consumeEvasion(ctx, victim, source?.general.id ?? '')) {
-                    evasionBlocked = true;
-                    return { thisHitReduce: 1 - remaining, evasionBlocked: true };
-                  }
-                }
               }
             } else {
               applyOnHurtEffect(ctx, caster, skill, cfg, victim, source);
@@ -12086,6 +12103,15 @@ function triggerOnHurt(
             }
           }
         }
+      }
+    }
+    // 所有 before_damage 钩子执行完毕后，统一做一次「无视规避 + 规避最终判定」。
+    // 这里是 ignore_evasion（缺省制）的唯一消耗点，同时处理钩子期间新挂的 evasion
+    // 和目标原本已有的 evasion 状态栈 / evade_chance 概率。
+    // 同时尊重 hit.ignoresEvasion（动摇 DoT 等自身带的「无视规避」标记），跳过目标 evasion 判定。
+    if (timing === 'before_damage') {
+      if (consumeEvasion(ctx, victim, source?.general.id ?? '', hit)) {
+        evasionBlocked = true;
       }
     }
   } finally {
@@ -12252,19 +12278,20 @@ function settleCounterOnHurt(ctx: CombatContext, holder: UnitState, attacker: Un
     );
     const capped = applyTroopCap(damage, attacker.troops);
     const retMods = collectDamageModifiers(ctx, holder, attacker, true, hit, { includeAvoid: false });
-    ctx.events.push({
-      type: 'damage',
-      sourceId: holder.general.id,
-      creditToId: holder.general.id,
-      targetId: attacker.general.id,
-      skillId: status.sourceSkillId,
-      skillName: resolveSkill(ctx, status.sourceSkillId)?.name ?? status.sourceSkillId,
-      damageType: 'physical',
-      damage: capped,
-      breakdown,
-      modifiers: retMods,
+    applyDamage(ctx, attacker, capped, holder, 'physical', 'skill', retMods, undefined, () => {
+      ctx.events.push({
+        type: 'damage',
+        sourceId: holder.general.id,
+        creditToId: holder.general.id,
+        targetId: attacker.general.id,
+        skillId: status.sourceSkillId,
+        skillName: resolveSkill(ctx, status.sourceSkillId)?.name ?? status.sourceSkillId,
+        damageType: 'physical',
+        damage: capped,
+        breakdown,
+        modifiers: retMods,
+      });
     });
-    applyDamage(ctx, attacker, capped, holder, 'physical', 'skill', retMods);
   }
 }
 
@@ -12338,14 +12365,16 @@ export function applyDamage(
    *   ② 极火佐攻「下 1 次主动战法伤害提升」的次数消耗需要 `skillType`。
    * 缺省时退化为 `{damageSource, damageType}`。
    */
-  hit?: DamageHitContext
-): void {  // 已阵亡单位不再吃伤害、不再走急救（阻止伤兵池膨胀后被救回）
-  if (!target.alive) return;
+  hit?: DamageHitContext,
+  onDamageDealt?: () => void
+): number {
+  let targetAlive = target.alive;
+  if (!targetAlive) return 0;
   if ((hit?.dotType === 'burning' || hit?.dotType === 'ignite') && target.general.secondaryTroop === '藤甲兵') {
     inflictStatus(ctx, target, { type: 'rampage', duration: 2 }, 'passive', 'trait_tengjia');
   }
   // 七擒七纵：我军前 N 次受到伤害实例的规避判定（共享计数；判定成败都消耗 1 次，第 N 次后惩罚）
-  if (source && source.side !== target.side && resolveInstanceGuard(ctx, target, 'damage')) return;
+  if (source && source.side !== target.side && resolveInstanceGuard(ctx, target, 'damage')) return 0;
   // 援护代受：被援护者的普攻转由援护者承接（战报记 cover 事件，原目标本次不受伤害）。
   // 嵌套结算（反击/引爆）不再次转移，避免与 ctx.resolvingHurtHooks 下的二次 applyDamage 打架。
   if (damageSource === 'basic' && !ctx.resolvingHurtHooks) {
@@ -12365,8 +12394,8 @@ export function applyDamage(
   /** 本段 thisHitReduce 合计（缺省 0）；嵌套 applyDamage 跳过 before/after */
   let reduceRate = 0;
   if (!ctx.resolvingHurtHooks) {
-    const before = triggerOnHurt(ctx, target, source, damageType, damageSource, 'before_damage');
-    if (before.evasionBlocked) return;
+    const before = triggerOnHurt(ctx, target, source, damageType, damageSource, 'before_damage', hit);
+    if (before.evasionBlocked) return 0;
     reduceRate = before.thisHitReduce;
     // 避锐（疲兵沮意）：受到伤害前消耗 1 层，令**该次**伤害降低对应档位（受谋略，施加时冻结）。
     // 分档口径：攻击伤害吃 perStackRate、策略伤害吃 perStackRateStrategy
@@ -12478,6 +12507,8 @@ export function applyDamage(
   // 给刚推入的动兵力事件补「结算后兵力」（战报在伤害数字后显示「（剩余 N）」）；
   // 补在受击钩子之前 → 该值=本次伤害结算后的兵力，不含随之触发的急救恢复
   annotateAfterTroops(ctx, target);
+  // 调用方在扣兵后、after_damage 钩子之前推送自己的 damage 事件（确保规避判定完成后才展示伤害）
+  if (actual > 0) onDamageDealt?.();
   const lethal = target.troops <= 0;
   // 伤兵机制（v0.15 修正）：受击损失按**固定**直接死亡率即时拆分——每 100 点伤害直接死亡 `deathRate`
   // （默认 5）点（永久损失，不可恢复），其余入伤兵池（可恢复，池跨回合累计）。
@@ -12635,6 +12666,7 @@ export function applyDamage(
       side: target.side,
     });
   }
+  return actual;
 }
 
 /**
