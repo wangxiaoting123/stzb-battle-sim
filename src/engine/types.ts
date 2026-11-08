@@ -2675,7 +2675,7 @@ export type Status =
    * 覆盖**任意伤害类型**（攻击/策略），由携带者下一次造成伤害时消耗（consumeEvasion 内统一处理，
    * 携带者自己带此标记则跳过规避判定）；不按回合递减（两个 tick 函数显式跳过）。
    */
-  | { type: 'ignore_evasion'; appliedRound: number; sourceSkillType: SkillType; sourceSkillId: string; sourceUnitId?: string; /** 宝物「识破」：只在前 N 回合有效（不消耗） */ throughRound?: number; /** 宝物「奋武」：仅在普通攻击增伤 > N 时生效（不消耗） */ requireBasicBoostOver?: number }
+  | { type: 'ignore_evasion'; appliedRound: number; sourceSkillType: SkillType; sourceSkillId: string; sourceUnitId?: string; /** 宝物「识破」：只在前 N 回合有效（不消耗） */ throughRound?: number; /** 宝物「奋武」：仅在普通攻击增伤 > N 时生效（不消耗） */ requireBasicBoostOver?: number; /** 同次追击多 targets（元戎·迸发）场景：延迟到所有 targets 结算完再统一消耗 */ deferredConsume?: boolean }
   /** 控制效果额外 +1 目标（鸾凤和鸣）：消耗制，不按回合递减（两个 tick 函数显式跳过） */
   | { type: 'control_spread'; remaining: number; appliedRound: number; sourceSkillType: SkillType; sourceSkillId: string; sourceUnitId?: string };
 

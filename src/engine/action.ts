@@ -6089,7 +6089,7 @@ export function consumeEvasion(
           damageBoosts(ctx, attacker!, target, hit).causedMult - 1 > s.requireBasicBoostOver))
   );
   if (attacker && ignore) {
-    if (!skipIgnoreConsume && ignore.throughRound == null && ignore.requireBasicBoostOver == null) {
+    if (!skipIgnoreConsume && ignore.throughRound == null && ignore.requireBasicBoostOver == null && !ignore.deferredConsume) {
       attacker.statuses = attacker.statuses.filter((s) => s !== ignore);
       ctx.events.push({ type: 'status_expired', unitId: attacker.general.id, statusType: 'ignore_evasion' });
     }
@@ -11322,6 +11322,26 @@ function triggerPursuitSkill(
     }
   }
 
+  // 势无虚动「下一次追击」的 ignore_evasion 是**消耗制**——consumeEvasion 在**每次伤害命中**时立即移除。
+  // 同次追击多 targets（元戎·迸发）场景：第一个 target 命中就消费掉 ignore_evasion，额外 target 就吃不到了。
+  // 这里临时标记 deferredConsume=true，让 consumeEvasion 只跳过规避判定但不消耗，
+  // 等所有 targets 结算完再手动统一消耗。damage_boost 的消耗点本来就在 executeSkillOutputs 之后
+  // （consumePursuitBoostOnCast），天然覆盖多 targets，无需额外处理。
+  const hasMultipleTargets = targets.length > 1;
+  let deferredIgnores: UnitState['statuses'] = [];
+  if (hasMultipleTargets) {
+    deferredIgnores = unit.statuses.filter(
+      (s) =>
+        s.type === 'ignore_evasion' &&
+        s.throughRound == null &&
+        s.requireBasicBoostOver == null &&
+        !s.deferredConsume,
+    );
+    for (const ign of deferredIgnores) {
+      (ign as { deferredConsume?: boolean }).deferredConsume = true;
+    }
+  }
+
   ctx.events.push({
     type: 'skill_target',
     unitId: unit.general.id,
@@ -11338,6 +11358,11 @@ function triggerPursuitSkill(
   const pursuitBoostSnap = snapshotPursuitBoostCharges(unit);
   executeSkillOutputs(ctx, unit, skill, targets);
   consumePursuitBoostOnCast(unit, pursuitBoostSnap);
+  // 手动统一消耗 deferred 的 ignore_evasion
+  for (const ign of deferredIgnores) {
+    unit.statuses = unit.statuses.filter((s) => s !== ign);
+    ctx.events.push({ type: 'status_expired', unitId: unit.general.id, statusType: 'ignore_evasion' });
+  }
   triggerPursuitCastHooks(ctx, unit, skill, targets[0]);
 }
 
