@@ -262,17 +262,23 @@ export function runBattle(config: BattleConfig): BattleReport {
     runPhase(() => triggerPendingRoundOutputs(ctx, round));
 
     // 每回合按当前生效速度重排（含加点、部队加成、速度增益/减益）；先手组（priorityRounds）仍优先
+    const unitStats: Record<string, { speed: number; priority: boolean }> = {};
     const roundOrder = buildPriorityOrder(
       [...myTeam, ...enemyTeam],
       round,
       skills,
-      turnOrderTieBreaks
+      turnOrderTieBreaks,
+      unitStats
     );
     const roundOrderIds = roundOrder.map((u) => u.general.id);
     roundStartEv.turnOrder = roundOrderIds;
+    roundStartEv.unitStats = unitStats;
     // 准备阶段的「始」出手顺序与第 1 回合实际序对齐（含先手组 / 准备阶段速度变化）；
     // 正式回合仍以各自 round_start.turnOrder 为权威（回合前钩子可能再改速度）。
-    if (round === 1) battleStartEv.turnOrder = roundOrderIds;
+    if (round === 1) {
+      battleStartEv.turnOrder = roundOrderIds;
+      battleStartEv.unitStats = unitStats;
+    }
 
     for (const unit of roundOrder) {
       if (winner) break;
@@ -391,26 +397,21 @@ export function buildPriorityOrder(
   turnOrder: UnitState[],
   round: number,
   skills: Map<string, Skill>,
-  tieBreaks?: ReadonlyMap<UnitState, number>
+  tieBreaks?: ReadonlyMap<UnitState, number>,
+  outUnitStats?: Record<string, { speed: number; priority: boolean }>
 ): UnitState[] {
   const troopPriority = (u: UnitState): boolean => {
     const troop = u.general.secondaryTroop ? SECONDARY_TROOPS[u.general.secondaryTroop] : undefined;
-    // 先发 / 奇袭：前 N 回合无条件优先行动（攻守双方同口径，用户 2026-10-19 纠正）
     return troop?.priorityRounds != null && round <= troop.priorityRounds;
   };
   const inPriority = (u: UnitState): boolean =>
-    // ① 通用特性「疾行」：骑兵系高级兵种前 3 回合优先行动
     (u.general.secondaryTraits?.includes('疾行') === true && round <= 3) ||
-    // ② 包内先发/奇袭：前 N 回合优先（长弓兵 / 白衣死士均不限攻守）
     troopPriority(u) ||
-    // ④ 主动战法发动后授予的 priority 状态（诸葛锦囊）
     u.statuses.some((st) => st.type === 'priority') ||
-    // ⑤ 指挥战法常驻（先驱突击前 N 回合）
     u.general.commandSkillIds.some((id) => {
       const s = skills.get(id);
       return s?.type === 'command' && s.priorityRounds !== undefined && round <= s.priorityRounds;
     }) ||
-    // ⑥ 被动先手（侵掠如火「在战斗中可以优先行动」，priorityRounds 999 = 全程）
     u.general.passiveSkillIds.some((id) => {
       const s = skills.get(id);
       return s?.type === 'passive' && s.priorityRounds !== undefined && round <= s.priorityRounds;
@@ -423,7 +424,15 @@ export function buildPriorityOrder(
     if (pos !== 0) return pos;
     return (tieBreaks?.get(a) ?? 0) - (tieBreaks?.get(b) ?? 0);
   };
-  // 先手组：先比速度/站位；随后普通组同样排序。先手排完才轮到其他武将
+  if (outUnitStats) {
+    for (const u of turnOrder) {
+      if (!u.alive) continue;
+      outUnitStats[u.general.id] = {
+        speed: effectiveStat(u, 'speed', { ignoreExpired: true }),
+        priority: inPriority(u),
+      };
+    }
+  }
   const priority = turnOrder.filter((u) => u.alive && inPriority(u)).sort(sortBySpeed);
   const rest = turnOrder.filter((u) => u.alive && !inPriority(u)).sort(sortBySpeed);
   return [...priority, ...rest];

@@ -2724,7 +2724,13 @@ export interface UnitState {
 // ─── 战报事件类型 ───
 
 export type BattleEvent =
-  | { type: 'battle_start'; turnOrder: string[]; seed: number }
+  | {
+      type: 'battle_start';
+      turnOrder: string[];
+      seed: number;
+      /** 准备阶段各单位的生效速度与先手标记（与第 1 回合一致，含准备阶段全部速度变化） */
+      unitStats?: Record<string, { speed: number; priority: boolean }>;
+    }
   | { type: 'prep_phase'; phase: 'formation' | 'troop' | 'treasure' | 'chenshou' | 'skill' }
   | {
       type: 'formation_bonus';
@@ -2737,7 +2743,13 @@ export type BattleEvent =
       afterStats?: { attack: number; defense: number; strategy: number; speed: number };
     }
   | { type: 'preparation_end' }
-  | { type: 'round_start'; round: number; turnOrder?: string[] }
+  | {
+      type: 'round_start';
+      round: number;
+      turnOrder?: string[];
+      /** 本回合各单位的生效速度与是否处于先手组（用于行动顺序弹窗提示） */
+      unitStats?: Record<string, { speed: number; priority: boolean }>;
+    }
   | { type: 'unit_act_start'; unitId: string; name: string; position: Position; phase: string }
   | {
       type: 'skill_trigger';

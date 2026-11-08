@@ -281,6 +281,16 @@ export function createBattleView(report: BattleReport, opts: BattleViewOpts = {}
     return startTurnOrder;
   };
 
+  const unitStatsForRound = (r: number): Record<string, { speed: number; priority: boolean }> | null => {
+    if (r <= 0) {
+      if (startEv && startEv.type === 'battle_start' && startEv.unitStats) return startEv.unitStats;
+      return null;
+    }
+    const ev = report.events.find((e) => e.type === 'round_start' && e.round === r);
+    if (ev && ev.type === 'round_start' && ev.unitStats) return ev.unitStats;
+    return null;
+  };
+
   /** 轨上按钮 */
   const railBtn = (text: string): HTMLButtonElement => {
     const b = document.createElement('button');
@@ -407,9 +417,40 @@ export function createBattleView(report: BattleReport, opts: BattleViewOpts = {}
     log.scrollTop += group.getBoundingClientRect().top - log.getBoundingClientRect().top;
   }
 
+  // 共享的头像 tooltip（挂在 body 上，脱离 overflow:hidden 裁剪）
+  let avatarTip: HTMLElement | null = null;
+  let avatarTipOwner: HTMLElement | null = null;
+  const showAvatarTip = (owner: HTMLElement, text: string) => {
+    if (!avatarTip) {
+      avatarTip = document.createElement('div');
+      avatarTip.className = 'turn-tip';
+      document.body.appendChild(avatarTip);
+    }
+    avatarTipOwner = owner;
+    avatarTip.textContent = text;
+    avatarTip.style.display = 'block';
+    const rect = owner.getBoundingClientRect();
+    const tipRect = avatarTip.getBoundingClientRect();
+    const gap = 6;
+    const rightEdge = window.innerWidth;
+    const fitsRight = rect.right + tipRect.width + gap <= rightEdge;
+    const left = fitsRight ? rect.right + gap : rect.left - tipRect.width - gap;
+    const top = Math.max(2, rect.top + (rect.height - tipRect.height) / 2);
+    avatarTip.style.left = `${left}px`;
+    avatarTip.style.top = `${top}px`;
+  };
+  const hideAvatarTip = (owner?: HTMLElement) => {
+    if (!avatarTip) return;
+    if (owner && avatarTipOwner !== owner) return;
+    avatarTip.style.display = 'none';
+    avatarTipOwner = null;
+  };
+
   /** 按当前回合出手顺序刷新左侧头像列 */
   function renderTurnOrder(r: number): void {
+    hideAvatarTip();
     const ids = turnOrderForRound(r);
+    const statsMap = unitStatsForRound(r);
     turns.innerHTML = '';
     turnBtns.length = 0;
     ids.forEach((id, i) => {
@@ -417,8 +458,30 @@ export function createBattleView(report: BattleReport, opts: BattleViewOpts = {}
       btn.type = 'button';
       btn.className = 'turn';
       btn.dataset.unitId = id;
-      btn.innerHTML = `<span class="n">${i + 1}</span><span class="av"><img src="${heroIcon(id)}" alt="" onerror="this.style.display='none'" /></span>`;
+      const st = statsMap?.[id];
+      btn.innerHTML = `<span class="n">${i + 1}</span><span class="av"><img src="${heroIcon(id)}" alt="" onerror="this.style.display='none'" /></span>${st?.priority ? '<span class="pri-badge">先</span>' : ''}`;
       btn.onclick = () => scrollLogToUnit(id);
+      if (st) {
+        const parts: string[] = [];
+        parts.push(`速度 ${st.speed}`);
+        if (st.priority) parts.push(`先手`);
+        const tipText = `${nm(id)} · ${parts.join(' · ')}`;
+        let touchTimer: number | null = null;
+        btn.addEventListener('mouseenter', () => showAvatarTip(btn, tipText));
+        btn.addEventListener('mouseleave', () => hideAvatarTip(btn));
+        btn.addEventListener('touchstart', () => {
+          if (touchTimer) clearTimeout(touchTimer);
+          touchTimer = window.setTimeout(() => showAvatarTip(btn, tipText), 300);
+        }, { passive: true });
+        btn.addEventListener('touchend', () => {
+          if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+          hideAvatarTip(btn);
+        });
+        btn.addEventListener('touchcancel', () => {
+          if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+          hideAvatarTip(btn);
+        });
+      }
       turns.appendChild(btn);
       turnBtns.push(btn);
     });

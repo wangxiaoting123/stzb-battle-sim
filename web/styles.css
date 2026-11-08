@@ -1551,6 +1551,35 @@ main {
   object-fit: cover;
   object-position: 50% 18%;
 }
+.turn .pri-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  font-size: 9px;
+  line-height: 12px;
+  padding: 0 3px;
+  background: linear-gradient(135deg, #f6c55d, #e8a317);
+  color: #3a2500;
+  border-radius: 6px;
+  font-weight: 700;
+  flex-shrink: 0;
+  pointer-events: none;
+  box-shadow: 0 0 3px rgba(255, 200, 60, 0.5);
+}
+.turn .turn-tip {
+  position: fixed;
+  z-index: 30;
+  white-space: nowrap;
+  background: var(--color-surface-2, #2a2a2a);
+  color: var(--color-text, #e8e8e8);
+  border: 1px solid var(--color-line, #444);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
 .dv-mid {
   min-width: 0;
   min-height: 0;
