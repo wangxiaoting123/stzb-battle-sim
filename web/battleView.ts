@@ -720,12 +720,14 @@ function renderEvents(
       }
       case 'skill_trigger': {
         if (ev.rate !== undefined) {
-          // 只保留主干：当前生效几率（含士气修正）；括号内的计算过程与判定字样不输出
           const who =
             ev.targetId && ev.targetId !== ev.unitId
               ? `【${nm(ev.targetId)}】来自【${nm(ev.unitId)}】的`
               : `【${nm(ev.unitId)}】`;
           add(ev.success ? 'good' : 'dim', `${who}【${ev.skillName}】当前生效几率为${ev.rate}%`);
+          if (!ev.success) {
+            add('dim', `　【${ev.skillName}】未生效`);
+          }
         } else {
           const s = SKILL_REGISTRY[ev.skillId];
           const tr = s && (s.type === 'active' || s.type === 'pursuit') ? s.triggerRate : undefined;
