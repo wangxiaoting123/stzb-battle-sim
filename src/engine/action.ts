@@ -4044,21 +4044,33 @@ function inflictStatusCore(
     // 显式叠层标记（官方文案写「可叠加」/「层数」，含 skill_range_buff 等数值型）→ 数值累加；其余默认刷新
     if (isExplicitStackCreate(create)) {
       if ('amount' in sameSource && 'amount' in create) {
-        // 层数上限（兵贵神速「防御 +10，可叠加 8 次」）：已达上限不再累加
         const cap = (create as { maxStacks?: number }).maxStacks;
         if (cap != null && ((sameSource as { stacks?: number }).stacks ?? 1) >= cap) return;
-        sameSource.amount += create.amount;
+        let stackDetail = '';
+        if (type in ATTR_STAT_LABEL) {
+          const kind = ATTR_STAT_KIND[type as keyof typeof ATTR_STAT_LABEL];
+          const before = effectiveStat(target, kind);
+          sameSource.amount += create.amount;
+          const after = effectiveStat(target, kind);
+          const percent = 'percent' in create && create.percent;
+          stackDetail = formatAttrChangeDetail(target, type as keyof typeof ATTR_STAT_LABEL, {
+            amount: create.amount,
+            percent,
+            before,
+            after,
+          });
+        } else {
+          sameSource.amount += create.amount;
+        }
         if (cap != null) {
           (sameSource as { stacks?: number }).stacks = ((sameSource as { stacks?: number }).stacks ?? 1) + 1;
         }
-        // 官方口径（疮痍累身截图）：同类属性增益重复施加 → 「【周泰】的攻击属性提高效果刷新了」
         if (type in ATTR_STAT_LABEL) {
-          const label = ATTR_STAT_LABEL[type as keyof typeof ATTR_STAT_LABEL];
           ctx.events.push({
-            type: 'status_changed',
+            type: 'status_inflicted',
             unitId: target.general.id,
             statusType: type,
-            detail: `${label}${create.amount >= 0 ? '提高' : '降低'}效果刷新了`,
+            detail: stackDetail,
           });
         }
       } else if ('rate' in sameSource && 'rate' in create) {
@@ -4107,19 +4119,34 @@ function inflictStatusCore(
     // —— 默认刷新（同源重复施加同一数值型效果）——
     // 数值替换为本次的 amount / rate（不回加），remaining = max(旧, 新)（用户口径）。
     if ('amount' in sameSource && 'amount' in create) {
-      sameSource.amount = create.amount;
-      if ('percent' in sameSource || 'percent' in create) {
-        (sameSource as { percent?: boolean }).percent = Boolean('percent' in create && create.percent);
-      }
-      // 属性刷新：发与首次施加同类型的事件（战报可见「降低了10（刷新）」，不新增状态实例）
+      let refreshDetail = '';
       if (type in ATTR_STAT_LABEL) {
-        const label = ATTR_STAT_LABEL[type as keyof typeof ATTR_STAT_LABEL];
-        const pctText = 'percent' in create && create.percent ? '%' : '';
+        const kind = ATTR_STAT_KIND[type as keyof typeof ATTR_STAT_LABEL];
+        const before = effectiveStat(target, kind);
+        sameSource.amount = create.amount;
+        if ('percent' in sameSource || 'percent' in create) {
+          (sameSource as { percent?: boolean }).percent = Boolean('percent' in create && create.percent);
+        }
+        const after = effectiveStat(target, kind);
+        const percent = 'percent' in create && create.percent;
+        refreshDetail = formatAttrChangeDetail(target, type as keyof typeof ATTR_STAT_LABEL, {
+          amount: create.amount,
+          percent,
+          before,
+          after,
+        });
+      } else {
+        sameSource.amount = create.amount;
+        if ('percent' in sameSource || 'percent' in create) {
+          (sameSource as { percent?: boolean }).percent = Boolean('percent' in create && create.percent);
+        }
+      }
+      if (type in ATTR_STAT_LABEL) {
         ctx.events.push({
           type: 'status_inflicted',
           unitId: target.general.id,
           statusType: type,
-          detail: `${label}${create.amount >= 0 ? '提高' : '降低'}了${Math.abs(create.amount)}${pctText}（刷新）`,
+          detail: refreshDetail,
         });
       }
     } else if ('rate' in sameSource && 'rate' in create) {

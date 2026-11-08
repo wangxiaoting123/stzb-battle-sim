@@ -564,7 +564,10 @@ function renderPrepEvents(
         const name = heroApi.nameHtml(ev.unitId);
         const title = cat === 'title' && ev.titleName ? `「${escapeHtml(ev.titleName)}」` : '';
         const suffix = title ? ` ${title}：` : ' ';
-        appendPhaseLine(container, 'good', `${name}${suffix}${formatBonusText(ev.bonuses)}`);
+        const statStr = ev.afterStats
+          ? ` → 属性：攻${ev.afterStats.attack} 防${ev.afterStats.defense} 谋${ev.afterStats.strategy} 速${ev.afterStats.speed}`
+          : '';
+        appendPhaseLine(container, 'good', `${name}${suffix}${formatBonusText(ev.bonuses)}${statStr}`);
       }
     }
 

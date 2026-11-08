@@ -122,7 +122,11 @@ function renderEvent(lines: string[], ev: BattleEvent): void {
         ev.category === 'faction' ? '阵营加成'
           : ev.category === 'title' ? `称号加成「${ev.titleName ?? ''}」`
             : '兵种加成';
-      lines.push(`  → ${ev.unitName} ${cat}：${formatBonusText(ev.bonuses)}`);
+      const bonusText = formatBonusText(ev.bonuses);
+      const after = ev.afterStats
+        ? ` → 属性：攻${ev.afterStats.attack} 防${ev.afterStats.defense} 谋${ev.afterStats.strategy} 速${ev.afterStats.speed}`
+        : '';
+      lines.push(`  → ${ev.unitName} ${cat}：${bonusText}${after}`);
       break;
     }
     case 'preparation_end':

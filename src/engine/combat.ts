@@ -140,14 +140,31 @@ export function runBattle(config: BattleConfig): BattleReport {
       (a, b) => (POS[a.general.position] ?? 9) - (POS[b.general.position] ?? 9)
     );
     for (const u of order) {
+      const accum: typeof myBonus.lines[number]['bonuses'] = {
+        attack: 0, defense: 0, strategy: 0, speed: 0,
+      };
       for (const cat of ['faction', 'title', 'troop'] as const) {
         for (const line of lines.filter((l) => l.unitId === u.general.id && l.category === cat)) {
+          accum.attack += line.bonuses.attack;
+          accum.defense += line.bonuses.defense;
+          accum.strategy += line.bonuses.strategy;
+          accum.speed += line.bonuses.speed;
+          const prev = u.formationBonus;
+          u.formationBonus = accum;
+          const afterStats = {
+            attack: effectiveStat(u, 'attack'),
+            defense: effectiveStat(u, 'defense'),
+            strategy: effectiveStat(u, 'strategy'),
+            speed: effectiveStat(u, 'speed'),
+          };
+          u.formationBonus = prev;
           events.push({
             type: 'formation_bonus',
             unitId: line.unitId,
             unitName: u.general.name,
             category: line.category,
             bonuses: line.bonuses,
+            afterStats,
             ...(line.titleName ? { titleName: line.titleName } : {}),
           });
         }

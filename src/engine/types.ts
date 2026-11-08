@@ -2733,6 +2733,8 @@ export type BattleEvent =
       category: 'faction' | 'title' | 'troop';
       titleName?: string;
       bonuses: FormationBonus;
+      /** 加完阵型/称号/兵种加成后的生效四维（含兵种特性与二级兵种永久属性，不含后续宝物/陈寿/战法） */
+      afterStats?: { attack: number; defense: number; strategy: number; speed: number };
     }
   | { type: 'preparation_end' }
   | { type: 'round_start'; round: number; turnOrder?: string[] }

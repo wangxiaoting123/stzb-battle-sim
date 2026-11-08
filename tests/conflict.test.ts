@@ -221,7 +221,7 @@ describe('重复施加：默认刷新 / 显式叠层才累加（用户口径）'
     );
     expect(refreshed).toHaveLength(2);
     expect(refreshed[1].detail).toContain('提高了20');
-    expect(refreshed[1].detail).toContain('刷新');
+    expect(refreshed[1].detail).toMatch(/\(\d+\)$/);
   });
 
   it('同源减伤默认刷新：rate 替换（0.30 → 0.28），不累加成 0.58', () => {
