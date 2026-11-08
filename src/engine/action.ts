@@ -669,35 +669,55 @@ function isLowestTroopsFoe(ctx: CombatContext, source: UnitState, target: UnitSt
   return target.troops <= Math.min(...foes.map((u) => u.troops));
 }
 
-function boostedBaseRate(unit: UnitState, skillType: SkillType, baseRate: number, skill?: Skill): number {
-  let rate = baseRate;
-  /** 次数型发动率提升（定军山「下 1 次攻击类主动或追击战法发动率提升 100%」）本次是否命中 */
+/**
+ * 发动率提升拆分：**战法来源的 trigger_boost 走士气系数，宝物来源的跳过士气直接加在最终结果上**。
+ * 官方口径（用户 2026-11-08）：士气只作用于「战法基础率 + 战法施加的发动率提升」，
+ * 宝物词条的发动率提升（筹算 / 英勇 / 熟虑 / 甚陷不惧等）直接加到士气修正后的最终值。
+ *
+ * 返回 { skillBoosted, treasureBoost, usedCharges }：
+ *   - skillBoosted: baseRate + 战法来源 trigger_boost（由调用方再乘士气系数）
+ *   - treasureBoost: 宝物来源 trigger_boost 之和（加算口径，直接加在士气修正后的最终发动率上）
+ *   - usedCharges: 次数型 trigger_boost 状态引用（由调用方消耗）
+ */
+function boostedBaseRate(
+  unit: UnitState,
+  skillType: SkillType,
+  baseRate: number,
+  skill?: Skill,
+): { skillBoosted: number; treasureBoost: number; usedCharges: Extract<Status, { type: 'trigger_boost' }>[] } {
+  let skillRate = baseRate;
+  let treasureRate = 0;
   const used: Extract<Status, { type: 'trigger_boost' }>[] = [];
   for (const s of unit.statuses) {
     if (s.type !== 'trigger_boost') continue;
     if (s.skillTypes && s.skillTypes.length > 0 && !s.skillTypes.includes(skillType)) continue;
-    // 攻击类过滤（侵掠如火）：只对输出含物理伤害的战法生效
     if (s.attackSkillsOnly && (!skill || !isAttackClassSkill(skill))) continue;
-    // 仅携带者主战法（甚陷不惧）
     if (s.mainSkillOnly && (!skill || skill.id !== unit.general.mainSkillId)) continue;
-    // 仅「可造成攻击伤害或策略伤害的战法」（甚陷不惧）
     if (s.damageSkillsOnly && (!skill || !isDamageClassSkill(skill))) continue;
-    // 仅「可造成策略伤害的战法」（宝物「筹算」）
     if (s.strategySkillsOnly && (!skill || !isStrategyClassSkill(skill))) continue;
-    // 仅「需要准备的主动战法」（宝物「熟虑」）
     if (s.preparedOnly && (!skill || !('prepare' in skill) || skill.prepare !== true)) continue;
-    // 仅**指定战法槽**（尽言直谏：随机 2/3 个主动战法 → 只有被抽中的那些战法吃发动率提升）
     if (s.skillIds && s.skillIds.length > 0 && (!skill || !s.skillIds.includes(skill.id))) continue;
-    if (s.additive === false) rate *= 1 + s.rate;
-    else rate += s.rate;
+    const isTreasure = isTreasureSource(s.sourceSkillId) || isChenshouSource(s.sourceSkillId);
+    if (isTreasure) {
+      treasureRate += s.rate;
+    } else {
+      if (s.additive === false) skillRate *= 1 + s.rate;
+      else skillRate += s.rate;
+    }
     if (s.charges != null) used.push(s);
   }
-  // 次数型：本次生效即消耗 1 次（无论发动率判定成败，官方「下 1 次…发动率提升」消耗于该次尝试）
+  return { skillBoosted: skillRate, treasureBoost: treasureRate, usedCharges: used };
+}
+
+/** 消耗次数型 trigger_boost 状态（定军山「下 1 次」类） */
+function consumeTriggerBoostCharges(
+  unit: UnitState,
+  used: Extract<Status, { type: 'trigger_boost' }>[],
+): void {
   for (const s of used) {
     s.charges = (s.charges ?? 1) - 1;
     if (s.charges <= 0) unit.statuses = unit.statuses.filter((x) => x !== s);
   }
-  return rate;
 }
 
 /**
@@ -10458,10 +10478,11 @@ export function triggerActiveSkill(
   const castCount = decayPerCast > 0 ? (ctx.skillCastCounters?.get(`${unit.general.id}:${skill.id}`) ?? 0) : 0;
   const rolled = rollTriggerRate(ctx.rng, skill.triggerRate);
   const decayed = decayPerCast > 0 ? Math.max(0, rolled - decayPerCast * castCount) : rolled;
-  // 发动率提升：乘算（难知如阴）或加算封顶（动如雷震），再乘士气系数
-  const base = boostedBaseRate(unit, 'active', decayed, skill);
+  // 发动率提升：战法来源的 trigger_boost 走士气系数，宝物来源的跳过士气直接加
+  const { skillBoosted, treasureBoost, usedCharges } = boostedBaseRate(unit, 'active', decayed, skill);
   const morale = effectiveMorale(unit);
-  const rate = moraleTriggerRate(morale, base);
+  const rate = Math.min(1, moraleTriggerRate(morale, skillBoosted) + treasureBoost);
+  consumeTriggerBoostCharges(unit, usedCharges);
   const success = ctx.rng.chance(rate);
   ctx.events.push({
     type: 'skill_trigger',
@@ -10469,9 +10490,8 @@ export function triggerActiveSkill(
     skillId: skill.id,
     skillName: skill.name,
     success,
-    // 战报显示：当前生效几率（含士气修正）——70% × 士气系数 1.12 = 78%
     rate: Math.round(rate * 100),
-    baseRate: Math.round(base * 100),
+    baseRate: Math.round(skillBoosted * 100),
     morale,
   });
   if (!success) return;
@@ -11125,15 +11145,16 @@ function executeSkillWithTargets(
                 ? allies
                 : enemies;
     targets = skillTargets(ctx, unit, pool, skill.range, targetMode, skill.groupCount ?? 2);
-    // 战法级「目标数 +1」（五兵之烈【弓】）：选目标阶段掷一次（士气修正 + skill_trigger），
+    // 战法级「目标数 +1」（五兵之烈【弓】）：选目标阶段掷一次（士气修正），
     // 命中则从「战法有效距离内、未选中」的存活单位中随机补 1 个；本次发动的全部输出段共用扩大后的池。
+    // 用独立事件类型 bonus_target_trigger（与主发动率 skill_trigger 区分，避免同一战法出现两次发动率判定）
     const bonus = skill.bonusGroupTargets;
     if (bonus && outputConditionMatches(ctx, unit, bonus.condition)) {
       const morale = effectiveMorale(unit);
       const rate = moraleTriggerRate(morale, bonus.rate);
       const success = ctx.rng.chance(rate);
       ctx.events.push({
-        type: 'skill_trigger',
+        type: 'bonus_target_trigger',
         unitId: unit.general.id,
         skillId: skill.id,
         skillName: skill.name,
@@ -11220,11 +11241,12 @@ function triggerPursuitSkill(
   // 七步释嫌等：进入追击发动率判定即「试图发动」
   triggerAllyActCommands(ctx, unit);
   if (!unit.alive) return;
-  // 发动率提升：追击同样吃 trigger_boost（动如雷震仅追击加算 +100 个百分点）
+  // 发动率提升：战法来源的 trigger_boost 走士气系数，宝物来源的跳过士气直接加
   const rolled = rollTriggerRate(ctx.rng, skill.triggerRate);
-  const base = boostedBaseRate(unit, 'pursuit', rolled, skill);
+  const { skillBoosted, treasureBoost, usedCharges } = boostedBaseRate(unit, 'pursuit', rolled, skill);
   const morale = effectiveMorale(unit);
-  const rate = moraleTriggerRate(morale, base);
+  const rate = Math.min(1, moraleTriggerRate(morale, skillBoosted) + treasureBoost);
+  consumeTriggerBoostCharges(unit, usedCharges);
   const success = ctx.rng.chance(rate);
   ctx.events.push({
     type: 'skill_trigger',
@@ -11233,7 +11255,7 @@ function triggerPursuitSkill(
     skillName: skill.name,
     success,
     rate: Math.round(rate * 100),
-    baseRate: Math.round(base * 100),
+    baseRate: Math.round(skillBoosted * 100),
     morale,
   });
   if (!success) return;

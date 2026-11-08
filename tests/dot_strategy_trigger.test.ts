@@ -142,7 +142,7 @@ describe('报障 ① · 宝物【筹算】对纯 DoT 谋略主战法生效', () 
     expect(dots.some((st) => !Array.isArray(st) && st.type === 'curse')).toBe(true);
   });
 
-  it('带筹算：密谋定蜀的判定基础率 35% → 50%（+15 个百分点）', () => {
+  it('带筹算：baseRate=35（士气作用的基数，宝物 boost 不走士气），最终 rate=50（35 + 15 宝物）', () => {
     const caster = unit(
       general('pangtong', '中军', { mainSkillId: 'mimou_dingshu', mainSkillName: '密谋定蜀' }),
       'my'
@@ -158,7 +158,9 @@ describe('报障 ① · 宝物【筹算】对纯 DoT 谋略主战法生效', () 
       [...ctx.myTeam, ...ctx.enemyTeam]
     );
     const t = triggers(ctx).find((e) => e.skillId === 'mimou_dingshu')!;
-    expect(t.baseRate).toBe(50);
+    // 新口径：宝物筹算的 15% 不走士气 → baseRate（士气乘的基数）= 35，最终 rate = 35 + 15 = 50
+    expect(t.baseRate).toBe(35);
+    expect(t.rate).toBe(50);
   });
 
   it('对照组：不带筹算仍是 35%；换成攻击类主战法时筹算不生效（口径没被放宽）', () => {

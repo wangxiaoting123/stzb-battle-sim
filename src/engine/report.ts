@@ -150,6 +150,12 @@ function renderEvent(lines: string[], ev: BattleEvent): void {
       }
       break;
     }
+    case 'bonus_target_trigger': {
+      const bonus = Math.round((ev.morale - 100) * 0.6);
+      const coef = (100 + bonus) / 100;
+      lines.push(`  → 【${ev.skillName}】选目标阶段判定：${ev.success ? '额外追加 1 个目标' : '未追加'}（施法者 ${ev.unitId}，几率 ${ev.rate}% = ${ev.baseRate}% × 士气系数 ${coef}）`);
+      break;
+    }
     case 'skill_cast': {
       // 链式战法（连环计 / 河内世泽）显示「父战法·子战法」，否则看不出这一步是哪个子战法放出来的
       const castName = ev.subSkill ? `${ev.skillName}·${ev.subSkill}` : ev.skillName;

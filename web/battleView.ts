@@ -670,6 +670,13 @@ function renderEvents(
         }
         break;
       }
+      case 'bonus_target_trigger': {
+        add(
+          ev.success ? 'good' : 'dim',
+          `　【${ev.skillName}】选目标：${ev.success ? '额外追加 1 个目标' : '未追加'}（几率 ${ev.rate}%）`
+        );
+        break;
+      }
       case 'skill_target': {
         // 链式战法（连环计 / 河内世泽）标出这一步是哪个子战法在选目标
         const sub = ev.subSkill ? `〈${ev.subSkill}〉` : '';

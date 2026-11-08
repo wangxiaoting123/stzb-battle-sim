@@ -2753,6 +2753,20 @@ export type BattleEvent =
       morale?: number;
     }
   /**
+   * 战法选目标阶段的额外目标判定（曹彰·五兵之烈【弓】「有 60.0% 几率该战法目标数 +1」）。
+   * 与 skill_trigger 语义不同：这是战法成功发动后、选目标阶段的附加判定，不是主发动率判定。
+   */
+  | {
+      type: 'bonus_target_trigger';
+      unitId: string;
+      skillId: string;
+      skillName: string;
+      success: boolean;
+      rate: number;
+      baseRate: number;
+      morale: number;
+    }
+  /**
    * 援护代受（移花接木 / 疮痍累身）：unitId 为友军 targetId 抵挡了一次普通攻击。
    * 官方口径「为其抵挡普通攻击」——仅普攻转移，战法伤害不转移。
    */
